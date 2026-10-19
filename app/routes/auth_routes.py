@@ -1,3 +1,4 @@
+from .. import limiter
 from flask import Blueprint, abort, make_response, redirect, render_template_string, request, url_for
 from sqlalchemy import text
 
@@ -45,6 +46,7 @@ def register():
 
 
 @bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if request.method == "GET":
         return render_template_string(FORM, title="Login", error=None)

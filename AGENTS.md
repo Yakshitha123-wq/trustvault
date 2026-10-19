@@ -1,9 +1,9 @@
 # TrustVault: project rules for the AI assistant
 
 ## Product
-Secure document-sharing platform. Stack: Flask, Jinja, PostgreSQL (psycopg),
-Bootstrap 5 + HTMX (served from our own /static), pytest, gunicorn, Render.
-
+Secure document-sharing platform. Stack: Flask, Jinja, PostgreSQL via SQLAlchemy
+(Core, parameterised queries only), Bootstrap 5 + HTMX (served from our own /static),
+pytest, gunicorn, Render.
 ## Non-negotiable security rules
 1. Every route that touches a document, version, thumbnail, search result or audit
    entry about a document MUST call authz.authorize(user, document, action).

@@ -63,8 +63,15 @@ def test_every_case_uses_a_real_action():
     assert {a for _, a, _ in CASES} == ACTIONS
 
 
-def test_disabled_user_with_a_grant_is_still_refused():
-    assert authorize(DISABLED, DOC, "read", {"u-disabled": "edit"}) is False
+def test_disabled_owner_is_refused():
+    disabled_owner = {"id": "u-owner", "role": "owner", "is_active": False}
+    for action in ACTIONS:
+        assert authorize(disabled_owner, DOC, action, GRANTS) is False
+
+
+def test_disabled_user_with_a_grant_is_refused():
+    for action in ACTIONS:
+        assert authorize(DISABLED, DOC, action, {"u-disabled": "edit"}) is False
 
 
 def test_unknown_action_is_denied():

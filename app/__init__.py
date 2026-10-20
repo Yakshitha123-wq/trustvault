@@ -1,3 +1,4 @@
+from werkzeug.middleware.proxy_fix import ProxyFix
 import os
 from flask import Flask
 from flask_wtf import CSRFProtect
@@ -14,6 +15,7 @@ limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
 def create_app():
     app = Flask(__name__)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     app.config["SECRET_KEY"] = os.environ["SECRET_KEY"]  # required, no default
     csrf.init_app(app)
     limiter.init_app(app)

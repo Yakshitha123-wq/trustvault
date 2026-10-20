@@ -13,11 +13,12 @@ csrf = CSRFProtect()
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     # Trust exactly one proxy (Render), so client IP and https are read correctly.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     app.config["SECRET_KEY"] = os.environ["SECRET_KEY"]  # required, no default
+    app.config.update(test_config or {})
     csrf.init_app(app)
     limiter.init_app(app)
 

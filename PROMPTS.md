@@ -1,7 +1,7 @@
 # PROMPTS.md
 
-AI tools used: Claude (chat) for planning, schema design, code drafts and explanations.
-No coding agent has been used so far.
+AI tools used: Claude (chat) for planning, schema design, code drafts, test drafts and
+explanations. No coding agent has been used so far.
 
 ## Context files reused across the week
 - `AGENTS.md`: project rules (security rules, roles, working style). Committed on
@@ -102,3 +102,49 @@ and passed again after restoring.
 **Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/a11b261e36e4917dd27c0a0380668ada0e2a48fc
 
 **How I checked:** the mutation run described above.
+
+---
+
+## Entry 5: authorize() depended on a field get_current_user() did not return (2026-10-20)
+**Tool:** Claude (chat)
+**Category:** authorisation
+
+**What I asked:** For `authorize(user, document, action, grants)`, matching the 48-case
+test matrix I wrote first, and for the `auth.py` it depends on.
+
+**What it produced:** An `authorize()` whose first check refuses any user without a
+truthy `is_active`. The `get_current_user()` it had given me earlier selected only
+id, email, name and role.
+
+**What was wrong:** The two pieces were each fine alone but wrong together. Every
+logged-in user, owners included, would have been refused on every document, because
+`user.get("is_active")` would be `None`. My unit tests could not catch it, because they
+pass hand-made dicts instead of the real `get_current_user()` output. The AI flagged
+the mismatch when it gave me `authorize()`, and again when I pasted my `auth.py`,
+which still lacked the field.
+
+**What I did instead:** Added `u.is_active` to the SELECT in `get_current_user()`
+(app/auth.py, line 53). The `AND u.is_active` in the WHERE clause stays, so a disabled
+user is refused twice, once by the query and once by `authorize()`. Route tests that use
+the real session path are still to be written.
+
+**A second finding, from my own mutation runs:** when I removed the `is_active` check,
+only one test failed (`test_disabled_user_with_a_grant_is_still_refused`). The DISABLED
+matrix rows still passed because that test user holds no grant, so the matrix alone did
+not guard the rule. While replacing that test I twice left a gap (the disabled owner,
+then the disabled grant-holder) and only found it by listing the collected tests with
+`pytest --collect-only`. I now have two tests, `test_disabled_owner_is_refused` and
+`test_disabled_user_with_a_grant_is_refused`, each checking all six actions.
+
+**Commits:**
+- authorize() and the is_active fix: https://github.com/Yakshitha123-wq/trustvault/commit/498f9e9d85ab9dbd89037c8f740c463da6745c9c
+- stronger disabled-user tests: https://github.com/Yakshitha123-wq/trustvault/commit/4f38e09badcb077a4b5e0921c8098c55d45dd542
+**How I checked:** 53 tests pass. I broke `authorize()` five ways, and each break made
+the expected tests fail:
+1. soft-deleted block commented out: `test_soft_deleted_document_is_owner_only`
+2. `is_active` check removed: `test_disabled_owner_is_refused` and
+   `test_disabled_user_with_a_grant_is_refused` (2 failed, 51 passed)
+3. `pass` instead of `allowed |= ADMIN_ALLOWS`: the ADMIN view_meta and view_audit rows
+4. `edit` added to the read grant: the READER edit row
+5. unknown-action check replaced with `pass`: `test_unknown_action_is_denied`
+After each break I ran `git restore app/authz.py` and confirmed the tests passed again.

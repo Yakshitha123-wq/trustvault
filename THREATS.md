@@ -8,6 +8,27 @@
 - test_tampering_with_a_row_is_detected
 **Mutation check (2026-10-19):** I commented out the hash comparison in verify_chain; test_tampering_with_a_row_is_detected failed with "tampering was NOT detected", then passed again after restoring.
 **Accepted risk:** someone who controls the owner account can disable the trigger and rewrite the whole chain consistently, and no test covers that. The app never uses that account. Possible later mitigation: publish the latest chain hash outside the database.
+## T2: Guessing or enumerating document IDs (2026-10-20)
+**Attack:** a logged-in user who was not granted a document requests `/documents/<id>` with an ID they guessed, copied or enumerated. A second angle: telling "exists but forbidden" apart from "does not exist" and so learning which documents exist.
+**Defence:** IDs are UUIDs. Every request goes through `get_document_or_404` (app/access.py), which calls `authorize()` and returns the same 404 whether the document is missing or the user is not allowed. The response bodies are identical. A malformed ID also returns 404, not a 500. The JSON for the metadata route does not include `storage_key`.
+**Status:** TESTED for `GET /documents/<id>` only, in tests/test_documents_access.py:
+- test_stranger_gets_404
+- test_missing_and_forbidden_look_identical
+- test_not_a_uuid_is_404_not_500
+- test_admin_can_see_metadata_only (no `storage_key` in the response)
+**Mutation checks (2026-10-20):**
+- I removed the `authorize(...)` call from `get_document_or_404`. Five tests failed: stranger, anonymous, missing-vs-forbidden, revocation and the audit test.
+- I added `storage_key` to the JSON in documents.py. Only test_admin_can_see_metadata_only failed.
+Both passed again after `git restore`.
+**Not covered yet:** download, edit, delete, share and search do not exist, so this entry says nothing about them. Each needs the same tests when built.
+**Accepted detail:** an anonymous request gets 401, not 404. That shows a login is needed but not whether the document exists.
+
+## T4: Access still works after it was revoked (2026-10-20)
+**Attack:** a user who was granted access keeps using it after the owner removes the grant, for example with the same session cookie.
+**Defence:** grants are not stored in the session. `get_document_or_404` reads the grants for the document from the database on every request, so a deleted grant has no effect on the next request. The cost is one extra query per document request.
+**Status:** TESTED for `GET /documents/<id>` only: test_revocation_is_immediate gets a 200, deletes the grant, and then expects a 404 on the same client with the same cookie.
+**Mutation check (2026-10-20):** I forced `grants = {}` before the authorize call. test_revocation_is_immediate and test_reader_can_see_metadata failed, and both passed again after restoring.
+**Not covered yet:** a disabled user, a revoked download link and a download already in progress when access is revoked. Download does not exist yet. The `is_active` check is unit-tested in tests/test_authz.py, but there is no route-level test for a disabled user.
 ## T8: Brute-force login (2026-10-19)
 **Attack:** guessing passwords by repeated POSTs to /login.
 **Defence:** Flask-Limiter, 5 POSTs per minute per IP (app/routes/auth_routes.py).

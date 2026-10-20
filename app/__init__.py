@@ -24,6 +24,8 @@ def create_app(test_config=None):
 
     from .routes.auth_routes import bp as auth_bp
     app.register_blueprint(auth_bp)
+    from .routes.documents import bp as documents_bp
+    app.register_blueprint(documents_bp)
 
     @app.get("/")
     def index():

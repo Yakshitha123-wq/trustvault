@@ -50,7 +50,7 @@ def get_current_user():
         return None
     with get_engine().connect() as conn:
         row = conn.execute(
-            text("SELECT u.id, u.email, u.name, u.role "
+            text("SELECT u.id, u.email, u.name, u.role, u.is_active "
                  "FROM sessions s JOIN users u ON u.id = s.user_id "
                  "WHERE s.token_hash = :h AND s.expires_at > now() AND u.is_active"),
             {"h": _hash_token(token)},

@@ -12,3 +12,4 @@ def test_post_without_csrf_token_is_rejected(people):
                data={"file": (io.BytesIO(b"%PDF-1.4\n"), "a.pdf")},
                content_type="multipart/form-data")
     assert r.status_code == 400
+    assert b"CSRF" in r.data   # Flask-WTF's message; validation errors say something else

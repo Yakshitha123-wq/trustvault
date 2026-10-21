@@ -234,3 +234,30 @@ and each one failed the test it should have.
 site I uploaded a PDF with curl, downloaded it, and the SHA-256 hashes matched. Then I ran
 Manual Deploy (Deploy latest commit) on Render and downloaded the same document again,
 and the hash was still identical.
+
+---
+
+## Entry 8: Every test ran with CSRF switched off, so nothing tested it (2026-10-21)
+**Tool:** Claude (chat)
+**Category:** access control
+
+**What I asked:** For test fixtures and route tests for documents (`conftest.py`,
+`tests/test_documents_access.py`, `tests/test_upload_download.py`).
+
+**What it produced:** An `app` fixture that sets `WTF_CSRF_ENABLED: False` so the test
+client can POST without a token. All the route tests use it and pass.
+
+**What was wrong:** With CSRF off in every test, nothing proved the app rejects a POST
+that has no token. If `CSRFProtect` were removed from `create_app`, no test would fail.
+The AI raised this when I asked how to check upload on the live site without a browser
+form. Until then I had believed the suite covered it.
+
+**What I did instead:** I checked the live site with `curl.exe`: an upload POST without a
+token returned 400. I then added `tests/test_csrf.py`, which builds an app with CSRF left
+on. Mutation check: with `WTF_CSRF_ENABLED` set to False in that test it failed with
+201 instead of 400; restored, it passed, and the full suite was at 90 passed. Grant and
+revoke use the same global protection but have no CSRF test of their own yet.
+
+**Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/8b60b8be5d0a9ee8412db3e622c55e59b8265c37
+
+**How I checked:** the live curl result and the mutation run described above.

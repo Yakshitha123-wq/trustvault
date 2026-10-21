@@ -21,15 +21,17 @@ final `AGENTS.md`, it said "PostgreSQL (psycopg)" and dropped SQLAlchemy.
 
 **What was wrong:** It changed a stack decision without asking me. I had expected
 SQLAlchemy, so the rules file no longer matched what I planned to build. Any
-tool reading that file would have generated code with the wrong library. The
-change is in commit a1b7c8b.
+tool reading that file would have generated code with the wrong library. The wrong
+line was in the first AGENTS.md commit (a1b7c8b).
 
 **What I did instead:** I noticed the mismatch and told the AI. We compared the
 options and chose SQLAlchemy Core with parameterised `text()` queries, because
 `db/schema.sql` stays the single source of truth and every query, including the
 authorisation check, is visible in the code. I updated `AGENTS.md` to match.
 
-**Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/35d9235075daf269bd2ee8acd1f2b834c500463b
+**Commits:**
+- wrong line: https://github.com/Yakshitha123-wq/trustvault/commit/a1b7c8b14d863a12cd8016065fc7c4cb4ebb4d90
+- fix: https://github.com/Yakshitha123-wq/trustvault/commit/35d9235075daf269bd2ee8acd1f2b834c500463b
 
 **How I checked:** I compared `AGENTS.md` with the packages in `requirements.txt`
 to confirm they agree.
@@ -139,6 +141,7 @@ then the disabled grant-holder) and only found it by listing the collected tests
 **Commits:**
 - authorize() and the is_active fix: https://github.com/Yakshitha123-wq/trustvault/commit/498f9e9d85ab9dbd89037c8f740c463da6745c9c
 - stronger disabled-user tests: https://github.com/Yakshitha123-wq/trustvault/commit/4f38e09badcb077a4b5e0921c8098c55d45dd542
+
 **How I checked:** 53 tests pass. I broke `authorize()` five ways, and each break made
 the expected tests fail:
 1. soft-deleted block commented out: `test_soft_deleted_document_is_owner_only`
@@ -148,3 +151,46 @@ the expected tests fail:
 4. `edit` added to the read grant: the READER edit row
 5. unknown-action check replaced with `pass`: `test_unknown_action_is_denied`
 After each break I ran `git restore app/authz.py` and confirmed the tests passed again.
+
+---
+
+## Entry 6: Three of my new route tests passed before the route existed (2026-10-20)
+**Tool:** Claude (chat)
+**Category:** access control
+
+**What I asked:** For tests first, then code, for `GET /documents/<id>`
+(tests/test_documents_access.py), covering owner, reader, stranger, admin,
+anonymous, a missing document, a malformed ID, revocation, and an audit row for a
+refused attempt.
+
+**What it produced:** Nine tests. I ran them before writing any route code: 6 failed
+and 3 passed. The three that passed were `test_stranger_gets_404`,
+`test_missing_and_forbidden_look_identical` and `test_not_a_uuid_is_404_not_500`.
+
+**What was wrong:** Those three passed because a route that does not exist also
+returns 404, so they said nothing about whether access is enforced. If I had only
+looked at "9 passed" at the end, I would have trusted tests that had not yet shown
+they could fail. The AI pointed this out after I pasted the run, so its tests were
+weaker than they looked until I checked.
+
+**What I did instead:** I wrote `app/access.py` (`get_document_or_404`) and the route,
+got all 9 passing (full suite 68), and then ran four mutation checks on the committed
+code, restoring the file with `git restore` after each:
+1. Removed the `authorize(...)` call from `get_document_or_404`: 5 tests failed
+   (`test_stranger_gets_404`, `test_anonymous_is_refused`,
+   `test_missing_and_forbidden_look_identical`, `test_revocation_is_immediate`,
+   `test_refused_attempt_is_audited`). So the 404 tests can fail.
+2. Removed the `write_audit(...)` call: only `test_refused_attempt_is_audited` failed.
+3. Set `grants = {}` before the authorize call: `test_reader_can_see_metadata` and
+   `test_revocation_is_immediate` failed.
+4. Added `storage_key` to the JSON in documents.py: only
+   `test_admin_can_see_metadata_only` failed.
+No mutation left every test green. After the last restore, `pytest -q` showed
+68 passed.
+
+**Commits:**
+- tests first: https://github.com/Yakshitha123-wq/trustvault/commit/71b9b4661ca30079b255f62184a196ee0d118a32
+- route and access code: https://github.com/Yakshitha123-wq/trustvault/commit/5e6b641bcec30547b539a40bb1ea65f57401a656
+
+**How I checked:** the four mutation runs above, plus the 6-failed, 3-passed output
+from before the route existed.

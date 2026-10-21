@@ -111,7 +111,9 @@ Each passed again after `git restore`.
 ## T14: Registering as a more powerful role (2026-10-21)
 **Attack:** a request to `/register` carries `role=admin` or `role=owner`, hoping the server copies it into the new account (mass assignment).
 **Defence:** the register route writes the role `viewer` in its SQL and never reads a role from the request (app/routes/auth_routes.py).
-**Status:** BUILT. No automated test yet.
+**Status:** TESTED: tests/test_register.py::test_register_ignores_a_role_field posts `role=admin` and checks the stored role is `viewer`.
+**Mutation check (2026-10-21):** I changed the INSERT to take the role from the form; the test failed because the role was `admin`. After `git restore` it passed again.
+**Known gaps:** registration is not rate limited and does not write an audit row, so someone can create accounts without leaving a record. I accept this for now. New accounts can only be viewers, and a viewer sees only what an owner grants.
 
 ## T15: Edit, delete, document list and search (2026-10-21)
 **Attack:** a user edits or deletes a document they only hold a read grant for; a document list or search shows names, owners or categories of documents the user was never granted, or the owner's soft-deleted documents.

@@ -38,7 +38,7 @@ def _make_user(role):
 @pytest.fixture
 def people():
     ids = {name: _make_user(role) for name, role in
-           [("owner", "owner"), ("reader", "viewer"),
+           [("owner", "owner"), ("other_owner", "owner"), ("reader", "viewer"),
             ("stranger", "viewer"), ("admin", "admin")]}
     yield ids
     with get_engine().begin() as conn:  # audit rows stay, by design
@@ -69,6 +69,9 @@ def doc(people):
                  "size_bytes, sha256) VALUES (:o, 'secret.pdf', :k, "
                  "'application/pdf', 3, 'x') RETURNING id"),
             {"o": people["owner"], "k": uuid.uuid4().hex}).scalar()
+        conn.execute(
+            text("INSERT INTO document_blobs (document_id, content) VALUES (:d, :c)"),
+            {"d": d, "c": b"%PDF-1.4\n% fixture\n"})
         conn.execute(
             text("INSERT INTO grants (document_id, user_id, permission, granted_by) "
                  "VALUES (:d, :u, 'read', :o)"),

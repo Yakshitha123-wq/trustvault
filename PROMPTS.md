@@ -127,8 +127,10 @@ which still lacked the field.
 
 **What I did instead:** Added `u.is_active` to the SELECT in `get_current_user()`
 (app/auth.py, line 53). The `AND u.is_active` in the WHERE clause stays, so a disabled
-user is refused twice, once by the query and once by `authorize()`. Route tests that use
-the real session path are still to be written.
+user is refused twice, once by the query and once by `authorize()`. I later added
+`tests/test_session_user.py`, which logs in through a real session and checks that
+`get_current_user()` returns `is_active` (commit
+https://github.com/Yakshitha123-wq/trustvault/commit/5122848a59574ff4069d2c46dddc76464022efc5).
 
 **A second finding, from my own mutation runs:** when I removed the `is_active` check,
 only one test failed (`test_disabled_user_with_a_grant_is_still_refused`). The DISABLED
@@ -173,9 +175,9 @@ looked at "9 passed" at the end, I would have trusted tests that had not yet sho
 they could fail. The AI pointed this out after I pasted the run, so its tests were
 weaker than they looked until I checked.
 
-**What I did instead:** I wrote `app/access.py` (`get_document_or_404`) and the route,
-got all 9 passing (full suite 68), and then ran four mutation checks on the committed
-code, restoring the file with `git restore` after each:
+**What I did instead:** The AI gave me `app/access.py` (`get_document_or_404`) and the
+route. I read it, got all 9 tests passing (full suite 68), and then ran four mutation
+checks on the committed code, restoring the file with `git restore` after each:
 1. Removed the `authorize(...)` call from `get_document_or_404`: 5 tests failed
    (`test_stranger_gets_404`, `test_anonymous_is_refused`,
    `test_missing_and_forbidden_look_identical`, `test_revocation_is_immediate`,
@@ -194,3 +196,41 @@ No mutation left every test green. After the last restore, `pytest -q` showed
 
 **How I checked:** the four mutation runs above, plus the 6-failed, 3-passed output
 from before the route existed.
+
+---
+
+## Entry 7: AI planned file storage the host would delete (2026-10-21)
+**Tool:** Claude (chat)
+**Category:** other (storage design)
+
+**What I asked:** For the storage design and the project rules in `AGENTS.md`.
+
+**What it produced:** Rule 4 of `AGENTS.md` and the `storage_key` column assumed files
+would live in a private directory under random names. Nothing in the deployment guidance
+mentioned that the host's disk is temporary.
+
+**What was wrong:** Render free web services have an ephemeral filesystem, so local files
+are lost on every redeploy, restart and spin-down (after 15 minutes idle). Uploads would
+have disappeared while the database still listed them, and a judge would get an error on
+download. The AI only raised this on 2026-10-21, after the app was deployed and just before
+building upload, and it checked Render's documentation then. I had not noticed it myself.
+
+**What I did instead:** Stored file bytes in Postgres, in a new `document_blobs` table
+(db/migrations/002_document_blobs.sql), so files survive restarts and the upload and its
+audit row can commit in one transaction. Updated rule 4 of `AGENTS.md`. I wrote the upload
+and download tests before the code, but I forgot to commit them, so the code commit
+(65e441f) comes first and the tests commit (67da176) came about an hour later. The git
+history therefore does not show the tests-first order that it shows for the document route
+(71b9b46 then 5e6b641). I then ran eight mutation checks on the upload and download code,
+and each one failed the test it should have.
+
+**Commits:**
+- table and role grant: https://github.com/Yakshitha123-wq/trustvault/commit/9fe3788431ac5466985c83f520e4f17a20928243
+- upload, download and blob storage: https://github.com/Yakshitha123-wq/trustvault/commit/65e441f2bea4b799c5fd995f9194f62acebecea6
+- upload and download tests: https://github.com/Yakshitha123-wq/trustvault/commit/67da1761a4a485f4dc2191eace627bf2df7f3392
+- AGENTS.md rule 4 updated: https://github.com/Yakshitha123-wq/trustvault/commit/641256e6ddd7e3b6483e8459bbd70c5109f376b5
+
+**How I checked:** the upload and download tests pass (89 in the full suite). On the live
+site I uploaded a PDF with curl, downloaded it, and the SHA-256 hashes matched. Then I ran
+Manual Deploy (Deploy latest commit) on Render and downloaded the same document again,
+and the hash was still identical.

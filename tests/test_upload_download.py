@@ -126,3 +126,5 @@ def test_refused_download_is_audited(client_for, people, doc):
     before = _audit_count("document_access", "denied", people["stranger"], doc)
     client_for(people["stranger"]).get(f"/documents/{doc}/download")
     assert _audit_count("document_access", "denied", people["stranger"], doc) == before + 1
+def test_admin_cannot_upload(client_for, people):
+    assert _upload(client_for(people["admin"])).status_code == 403

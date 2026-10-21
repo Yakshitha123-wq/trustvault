@@ -1,5 +1,5 @@
 -- TrustVault schema (PostgreSQL 13+)
--- Run as the database owner, NOT as the app role.
+-- Run as the database owner, NOT as the app role. Then run db/roles.sql.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -29,7 +29,7 @@ CREATE TABLE documents (
   owner_id    uuid NOT NULL REFERENCES users(id),
   name        text NOT NULL,            -- display name only, never used as a path
   category    text NOT NULL DEFAULT 'general',
-  storage_key text UNIQUE NOT NULL,     -- random, unrelated to the name
+  storage_key text UNIQUE NOT NULL,     -- random opaque id, never used as a path
   mime_type   text NOT NULL,
   size_bytes  bigint NOT NULL,
   sha256      text NOT NULL,
@@ -40,6 +40,12 @@ CREATE TABLE documents (
 CREATE INDEX documents_owner_idx    ON documents(owner_id);
 CREATE INDEX documents_category_idx ON documents(category);
 CREATE INDEX documents_created_idx  ON documents(created_at);
+
+-- File contents live in the database, because the free host's disk is ephemeral.
+CREATE TABLE document_blobs (
+  document_id uuid PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+  content     bytea NOT NULL
+);
 
 CREATE TABLE grants (
   document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -55,7 +61,7 @@ CREATE TABLE audit_log (
   id             bigserial PRIMARY KEY,
   ts             timestamptz NOT NULL DEFAULT now(),
   actor_id       uuid,                  -- null for anonymous / failed logins
-  action         text NOT NULL,         -- upload, download, update, delete, grant, revoke, login_failed ...
+  action         text NOT NULL,         -- upload, download, update, delete, grant, revoke, login ...
   outcome        text NOT NULL CHECK (outcome IN ('allowed','denied')),
   document_id    uuid,
   target_user_id uuid,

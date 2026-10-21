@@ -12,9 +12,10 @@ pytest, gunicorn, Render.
    every request. Sessions are server-side (token hash stored in the sessions table).
 3. Revoking a grant or disabling a user takes effect on the very next request.
    Any download link issued earlier must re-check authorisation when used.
-4. Files live in a private directory under random storage keys. Never use the user's
-   filename in a path. Never serve files via a static route. Downloads go through the
-   authorised endpoint with Content-Disposition: attachment and X-Content-Type-Options: nosniff.
+4.  Files are stored as bytes in the database (table document_blobs), because the free
+   host's disk is ephemeral. Never use the user's filename as a path. Downloads go through
+   the authorised endpoint with Content-Disposition: attachment and
+   X-Content-Type-Options: nosniff.
 5. Uploads: size limit, extension allowlist, magic-byte check, store sha256.
 6. audit_log is append-only (DB privileges + trigger + hash chain). Log denied attempts
    too. A failed audit write must fail the action.

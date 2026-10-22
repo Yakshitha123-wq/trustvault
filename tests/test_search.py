@@ -141,7 +141,7 @@ def test_list_matches_authorize_for_everyone(client_for, people, doc):
                     text("SELECT user_id, permission FROM grants WHERE document_id = :d"),
                     {"d": uuid.UUID(doc_id)}).mappings().all()
                 grants = {str(r["user_id"]): r["permission"] for r in rows}
-                if authorize(user, d, "view_meta", grants):
+                if d["deleted_at"] is None and authorize(user, d, "view_meta", grants):
                     expected.add(doc_id)
         actual = set(_ids(client_for(user_id))) & mine
         assert actual == expected, f"list and authorize disagree for {name}"

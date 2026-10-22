@@ -168,3 +168,23 @@ Each passed again after `git restore`.
 - There is no restore and no purge yet, so deleted file bytes stay in the database.
 - A rejected name or category returns 400 but is not audited.
 - Edit and delete share the global CSRF protection (T12) but have no CSRF test of their own.
+
+## T17: Reading the audit trail, and who may (2026-10-22)
+**Attack:** a non-admin or anonymous caller opens the activity view or the chain check to see who did what; filter text is used for SQL injection; `limit` or `before_id` is used to pull the whole table; the view leaks content hashes.
+**Defence:** GET /admin/activity and GET /admin/audit/verify (app/routes/admin.py) call `authorize()` with the `view_audit` action, which only an admin holds. Anonymous callers get 401. Everyone else gets 404, and the refusal is written to the audit log (action `admin_access`, outcome `denied`). Every filter is a bound parameter. `document_id`, `actor_id`, `outcome`, dates, `limit` and `before_id` are validated and bad values return 400. `limit` is capped at 500, results are newest first, and paging uses `before_id`. The `sha256` field is removed from each event. Viewing the activity and running the chain check are themselves audited in the same transaction as the read, so if the audit write fails nothing is returned.
+**Status:** TESTED in tests/test_admin_activity.py (26 tests). A document's history shows who uploaded, downloaded, granted and revoked, and permission changes name both the actor and the person affected.
+**Mutation checks (2026-10-22), restoring after each:**
+1. Admin check made to refuse everyone: 20 failed, 6 passed (every admin request got 404).
+2. `authorize` removed from `_require_admin`: 5 failed (owner, reader, stranger and other owner got 200, and the refusal was not audited).
+3. Login check removed: test_anonymous_is_refused failed with a TypeError, so that check has to stay first.
+4. `write_audit` removed from the activity route, from verify, and from the refusal: each failed its own audit test (test_viewing_the_activity_is_audited, test_verify_reports_an_intact_chain_and_is_audited, test_refused_admin_attempt_is_audited).
+5. The sha256 filter removed: test_no_hashes_or_storage_keys failed.
+6. The `outcome` check removed: test_bad_filters_are_400[params2] failed (200 instead of 400).
+7. Order changed to oldest first: test_newest_first and test_paging_with_before_id failed.
+8. The limit cap removed: test_limit_is_respected_and_capped failed (4 events instead of 3).
+**Accepted risks:**
+- The demo admin credentials are public in the README (T10), so anyone can read the whole audit trail, including IP addresses and any email typed at a login.
+- Failed-login rows hold the typed email (T8), and the admin sees it.
+- /admin/audit/verify loads every row into memory. That is fine at this size and would not scale.
+- GET /admin/audit/verify writes an audit row on each call, a GET with a side effect. A cross-site request can only add noise rows.
+- No rate limit on the admin routes, and no summary of "notable" events: the admin filters by hand (for example `outcome=denied`).

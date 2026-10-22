@@ -301,3 +301,19 @@ the grant, revoke and list routes, each of which failed the tests it should (lis
 THREATS.md, T13). One of them showed that the database CHECK constraint on
 `grants.permission` is a second layer: with the route's permission check removed, bad
 values failed with a database error instead of a clean 400.
+
+## Entry 10: The AI's list rule contradicted its own admin rule (2026-10-22)
+**Tool:** Claude (chat)
+**Category:** access control
+
+**What I asked:** For document list and search tests, written before the route, from the search requirement in the brief (name, owner, category, date).
+
+**What it produced:** A recommendation, and a first test file, where an admin's list showed only documents the admin owned or held a grant on.
+
+**What was wrong:** That contradicted `authorize()`, the detail route and AGENTS.md, which let an admin see metadata of any document. An admin could open a document's metadata by ID but not find it in the list, and searching by owner is mostly useful to an admin. The AI only saw this when I pointed it back to the project requirements; I had not noticed it myself.
+
+**What I did instead:** The admin list shows metadata for every document that is not soft-deleted, never contents, and the download still returns 404 for admins. I rewrote the tests first, and added test_list_matches_authorize_for_everyone, which compares the list with `authorize()` for every kind of user so the SQL and `authorize()` cannot drift apart.
+
+**Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/3195ad8743ac59465f89d10e5b15f3bd8cbd38eb
+https://github.com/Yakshitha123-wq/trustvault/commit/97ef522e783733374f070ffa5791cdbb90aa00f3
+**How I checked:** the seven mutation runs listed in T15.

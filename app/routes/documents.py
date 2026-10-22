@@ -132,6 +132,81 @@ def detail(doc_id):
     return jsonify(id=str(doc["id"]), name=doc["name"], category=doc["category"],
                    mime_type=doc["mime_type"], size_bytes=doc["size_bytes"],
                    created_at=doc["created_at"].isoformat())
+def _clean_name(new_name, current_name):
+    """Return the cleaned name, or None if it is not acceptable.
+    The name must keep the document's current extension, so a .pdf cannot be
+    renamed to look like another type."""
+    new_name = new_name.strip()
+    if not new_name or len(new_name) > 100:
+        return None
+    if "/" in new_name or "\\" in new_name or any(ord(ch) < 32 for ch in new_name):
+        return None
+    if "." not in new_name or "." not in current_name:
+        return None
+    stem, new_ext = new_name.rsplit(".", 1)
+    old_ext = current_name.rsplit(".", 1)[1]
+    if not stem or new_ext.lower() != old_ext.lower():
+        return None
+    return new_name
+
+
+@bp.post("/documents/<doc_id>/edit")
+def edit(doc_id):
+    # Authorisation first, so a stranger gets the same 404 whatever they send.
+    user, doc = get_document_or_404(doc_id, "edit")
+    if doc["deleted_at"] is not None:   # the owner may open a deleted document, not change it
+        abort(404)
+
+    new_name = request.form.get("name")
+    new_category = request.form.get("category")
+    if new_name is None and new_category is None:
+        return jsonify(error="Send a name and/or a category."), 400
+
+    name, category = doc["name"], doc["category"]
+    if new_name is not None:
+        name = _clean_name(new_name, doc["name"])
+        if name is None:
+            return jsonify(error="Invalid name: up to 100 characters, no slashes, "
+                                 "and the same file extension as before."), 400
+    if new_category is not None:
+        category = new_category.strip()
+        if not category or len(category) > 50:
+            return jsonify(error="Category must be 1 to 50 characters."), 400
+
+    # Only name and category are ever updated. Nothing else is read from the form.
+    with get_engine().begin() as conn:
+        changed = conn.execute(
+            text("UPDATE documents SET name = :n, category = :c "
+                 "WHERE id = :d AND deleted_at IS NULL"),
+            {"n": name, "c": category, "d": doc["id"]}).rowcount
+        if changed != 1:
+            abort(404)
+        write_audit(conn, actor_id=user["id"], action="edit", outcome="allowed",
+                    document_id=doc["id"], ip=request.remote_addr,
+                    detail={"old_name": doc["name"], "name": name,
+                            "old_category": doc["category"], "category": category})
+    return jsonify(id=str(doc["id"]), name=name, category=category)
+
+
+@bp.post("/documents/<doc_id>/delete")
+def delete(doc_id):
+    # "delete" is not in any grant level, so only the owner can reach this.
+    user, doc = get_document_or_404(doc_id, "delete")
+    if doc["deleted_at"] is not None:
+        abort(404)
+
+    # Soft delete: the row and the stored bytes stay, so recovery is possible.
+    with get_engine().begin() as conn:
+        changed = conn.execute(
+            text("UPDATE documents SET deleted_at = now() "
+                 "WHERE id = :d AND deleted_at IS NULL"),
+            {"d": doc["id"]}).rowcount
+        if changed != 1:
+            abort(404)
+        write_audit(conn, actor_id=user["id"], action="delete", outcome="allowed",
+                    document_id=doc["id"], ip=request.remote_addr,
+                    detail={"name": doc["name"]})
+    return jsonify(id=str(doc["id"]), deleted=True)
 
 @bp.get("/documents/<doc_id>/download")
 def download(doc_id):

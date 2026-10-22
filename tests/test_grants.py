@@ -109,6 +109,9 @@ def test_anonymous_cannot_revoke(client_for, people, doc):
 @pytest.mark.parametrize("who", NOT_OWNERS)
 def test_non_owner_cannot_list_grants(client_for, people, doc, who):
     assert client_for(people[who]).get(f"/documents/{doc}/grants").status_code == 404
+def test_anonymous_cannot_list_grants(client_for, doc):
+    r = client_for(None).get(f"/documents/{doc}/grants")
+    assert r.status_code in (401, 302)
 
 
 # ---------- input checks (all by the real owner) ----------

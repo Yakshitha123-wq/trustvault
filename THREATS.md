@@ -26,11 +26,11 @@ Each passed again after `git restore`.
 **Accepted risks:**
 - A refused request writes an audit row and a missing-document request also does, but the forbidden path does extra work (grants lookup), so response time may differ slightly. I have not tried to hide this timing difference.
 - A malformed ID returns 404 without an audit row. Anonymous and stranger probes each write a row, so an attacker could grow the audit log. Rate limiting these routes is not built yet.
-**Not covered yet:** edit, delete and search do not exist, so this entry says nothing about them (see T15). Each needs the same tests when built.
+**Also covered by:** the list and search (T15) and edit and delete (T16).
 
 ## T3: A non-owner uploads a document (2026-10-21)
 **Attack:** a viewer, an admin or an anonymous caller sends `POST /documents` directly to put files into the system.
-**Defence:** the upload route requires the owner role on the server. Anonymous callers get 401, other roles 403, and the refusal is audited.
+**Defence:** the upload route requires the owner role on the server. Anonymous callers get 401 (not audited); other roles get 403 and the refusal is written to the audit log.
 **Status:** TESTED: test_viewer_cannot_upload, test_anonymous_cannot_upload, test_admin_cannot_upload.
 **Mutation check (2026-10-21):** I removed the owner-role check. test_viewer_cannot_upload failed with 201 instead of 403. Restored, it passed.
 
@@ -76,7 +76,8 @@ Each passed again after `git restore`.
 **Defence:** every upload, download, grant and revoke writes an `allowed` audit row in the same transaction as the action, so if the audit write fails the action fails. Grant and revoke rows name the person affected and the permission. Every refused document request writes a `denied` row (action `document_access`) before the 404 or 401 is returned. Rows are hash-chained (T1).
 **Status:** TESTED for upload, download, grant, revoke and refused access: test_upload_is_audited, test_successful_download_is_audited, test_refused_download_is_audited, test_refused_attempt_is_audited, test_grant_is_audited, test_grant_audit_row_names_the_person_and_level, test_revoke_is_audited, test_refused_grant_attempt_is_audited.
 **Mutation checks:** removing the `write_audit` call from `get_document_or_404` failed only test_refused_attempt_is_audited (2026-10-20). Removing it from the download route failed test_successful_download_is_audited, and removing it from grant and revoke failed their audit tests (2026-10-21). Each passed again after restoring.
-**Not covered yet:** edit and delete (not built, see T15). Login success and failure are audited, but no automated test checks them. Rate-limited logins (429), requests over the size cap (413) and account registration are not recorded.
+**Also covered:** edit and delete are audited in the same transaction (test_edit_is_audited, test_delete_is_audited, test_refused_edit_and_delete_are_audited, see T16).
+**Not covered:** list and search are not audited. Login success and failure are audited, but no automated test checks them. Anonymous upload refusals, rate-limited logins (429), requests over the size cap (413) and account registration are not recorded.
 
 ## T10: Known demo credentials on the live site (2026-10-21)
 **Attack:** anyone who reads the README logs in as a demo user and tries to do more than demo data allows.
@@ -100,7 +101,7 @@ Each passed again after `git restore`.
 **Status:** TESTED for upload, grant and revoke: tests/test_csrf.py::test_post_without_csrf_token_is_rejected, and test_grant_without_csrf_token_is_rejected and test_revoke_without_csrf_token_is_rejected in tests/test_grants.py. Each builds an app with CSRF left on and expects 400. The cookie flags are tested in tests/test_session_cookie.py.
 **Mutation checks (2026-10-21):** with CSRF switched off in the test app, the upload test failed (201 instead of 400) and both grant and revoke tests failed (200 instead of 400). In the cookie test, `httponly=False` failed the HttpOnly assertion and `samesite="None"` failed the SameSite assertion. Each passed again after restoring.
 **Live check (2026-10-21):** a curl upload to the deployed site with no CSRF token and no session cookie returned 400. Without CSRF an anonymous upload would have returned 401 from the route, so the CSRF check runs first. I did not repeat this while logged in.
-**Not covered:** login and logout have no CSRF test of their own, and every other test runs with CSRF switched off in conftest.py. Edit and delete do not exist yet. The cookie test does not check the Secure flag, which is only set over HTTPS, and I have not checked it on the live site.
+**Not covered:** login and logout have no CSRF test of their own, and every other test runs with CSRF switched off in conftest.py. Edit and delete share the global protection but have no CSRF test of their own. The cookie test does not check the Secure flag, which is only set over HTTPS, and I have not checked it on the live site.
 
 ## T13: Someone who is not the owner changes who has access (2026-10-21, updated 2026-10-22)
 **Attack:** a reader, an editor, an admin, another owner or an anonymous caller grants themselves or someone else access, upgrades their own grant from read to edit, revokes another person's access, or lists who has access. A forged cross-site POST does the same through the owner's browser.
@@ -117,7 +118,7 @@ Each passed again after `git restore`.
 7. Removed the permission check from the route: the five invalid-permission tests failed, because the database CHECK constraint rejected the insert (IntegrityError). So the constraint is a real second layer, but without the route's check a bad value would cause a server error instead of a 400.
 8. Turned CSRF off in the test client: both CSRF tests failed with 200 instead of 400.
 **Gap found by mutation 4 and closed:** with the `authorize` call removed, an anonymous request to list grants returned 200 and the grantees' emails, and no test failed, because only anonymous grant and revoke were tested. I added test_anonymous_cannot_list_grants. Repeating mutation 4, it failed with `assert 200 in (401, 302)` (19 failed, 15 passed), and it passed again after restoring.
-**Not covered:** an `edit` grant is stored and checked, but no edit route exists yet, so it currently gives the same access as `read`. The code refuses a disabled user as the target of a grant, but no test says so. Granting by email tells an owner whether an address is registered, which I accept. There is no limit on the number of grants per document and no rate limit on these routes.
+**Not covered:** an edit grant allows the edit route (T16) but not delete or share. The code refuses a disabled user as the target of a grant, but no test says so. Granting by email tells an owner whether an address is registered, which I accept. There is no limit on the number of grants per document and no rate limit on these routes.
 
 ## T14: Registering as a more powerful role (2026-10-21)
 **Attack:** a request to `/register` carries `role=admin` or `role=owner`, hoping the server copies it into the new account (mass assignment).
@@ -126,7 +127,44 @@ Each passed again after `git restore`.
 **Mutation check (2026-10-21):** I changed the INSERT to take the role from the form; the test failed with `assert 'admin' == 'viewer'`. After `git restore` it passed again.
 **Known gaps:** registration is not rate limited and does not write an audit row, so someone can create accounts without leaving a record. I accept this for now. New accounts can only be viewers, and a viewer sees only what an owner grants.
 
-## T15: Edit, delete, document list and search (2026-10-21)
-**Attack:** a user edits or deletes a document they only hold a read grant for; a document list or search shows names, owners or categories of documents the user was never granted, or the owner's soft-deleted documents.
-**Defence (planned):** edit needs the `edit` action and delete the owner only, both through `get_document_or_404`. The list and search filter by permission inside the SQL `WHERE` clause (owner, or a grant exists, not deleted), never by fetching everything and filtering in Python.
-**Status:** PLANNED. None of these routes exist. Each gets its tests written first.
+## T15: Document list and search (2026-10-22)
+**Attack:** the list or a search shows the name, owner or category of a document the user was never granted, or a soft-deleted document. Search text is used for SQL injection or LIKE wildcard tricks (`%`, `_`). A filter combined with the permission rule widens the result.
+**Defence:** `GET /documents` (app/routes/documents.py) puts the permission rule inside the SQL `WHERE`: my own documents, or a document I hold a grant on, or (admins only) metadata of any document, and never a soft-deleted one. The grants join is limited to the caller's own grant, so a grant held by someone else cannot make a document visible. The role is read from the database on every request. Every filter value (`q`, `owner`, `category`, `from`, `to`) is a bound parameter, and `%` and `_` in search text are escaped so they match literally. Bad dates return 400. Responses leave out `storage_key` and the file hash.
+**Status:** TESTED in tests/test_search.py (50 tests), including test_list_matches_authorize_for_everyone, which compares the list with `authorize()` for every kind of user so the SQL rule and the Python rule cannot drift apart.
+**Mutation checks (2026-10-22), restoring with `git restore` after each:**
+1. Permission clause deleted: 18 failed (stranger and other owner see documents, the 14 ungranted-filter cases, the grant-and-revoke list test, the authorize comparison).
+2. `is_admin` forced to True: the same 18 failed.
+3. `is_admin` forced to False: 3 failed (admin sees metadata, admin owner search, authorize comparison).
+4. `AND g.user_id = :me` dropped from the join: 19 failed, including the admin permission label showing `read`. My first attempt at this mutation removed a space and produced a SQL syntax error, so it proved nothing. I redid it.
+5. `deleted_at IS NULL` removed: 3 failed (deleted hidden, admin does not see deleted, authorize comparison).
+6. LIKE escaping removed: test_name_wildcards_are_literal failed.
+7. Login check removed: test_anonymous_is_refused failed (a TypeError, so the check has to stay first).
+**Note:** the injection-payload tests (test_odd_input_never_widens_the_list) stayed green under mutation 1, because those payloads match no document name either way. They show that injection text is treated as plain text, and the filter tests are what guard the permission rule.
+**Design decision:** an admin sees the name, owner and category of every document that is not soft-deleted, but never contents, and the download still returns 404. This matches `authorize()` and the detail route, so an admin cannot open a document by ID that the list hides. A document name can itself be sensitive, and I accept that.
+**Accepted risks:**
+- The list hides soft-deleted documents even from their owner, while `authorize()` lets the owner open them by ID. This is intentional (the comparison test excludes deleted documents for that reason).
+- At most 100 results, with no paging.
+- Date filters compare against midnight in the database's time zone, so a document uploaded just after midnight local time can fall on the previous day.
+- Searches are not written to the audit log. The brief asks for uploads, downloads, changes, deletions and permission changes.
+- No rate limit on the list route.
+
+## T16: Editing or deleting a document you were not allowed to change (2026-10-22)
+**Attack:** a reader, stranger, admin or another owner calls the edit or delete route directly. An editor tries to delete. A user submits extra form fields (`owner_id`, `storage_key`, `deleted_at`) to change what an edit must not touch. A name such as `../x.pdf` or `x.exe` is used to disguise a file. A deleted document is edited or deleted again.
+**Defence:** both routes go through `get_document_or_404` first, so a refused user gets the same 404 whatever they send. Edit needs the `edit` action (owner or an edit grant). Delete needs the `delete` action, which no grant level contains, so only the owner passes. The edit route reads only `name` and `category` from the form. A new name must keep the document's extension, contain no slashes or control characters, and be at most 100 characters. Delete is a soft delete: the row and the stored bytes stay. Edit and delete each write an audit row in the same transaction as the change.
+**Status:** TESTED in tests/test_edit_delete.py (33 tests). The first run before the routes existed was 21 failed and 12 passed; the 12 were refusals that pass only because a missing route also returns 404.
+**Mutation checks (2026-10-22):**
+1. Edit asks for `read` instead of `edit`: test_non_editors_cannot_edit[reader] failed.
+2. Delete asks for `edit` instead of `delete`: test_editor_cannot_delete failed.
+3. Both deleted-document checks removed from edit: test_deleted_document_cannot_be_edited failed.
+4. Both deleted-document checks removed from delete: test_deleting_twice_is_a_404 failed.
+5. `write_audit` removed from edit: test_edit_is_audited failed.
+6. `write_audit` removed from delete: test_delete_is_audited failed.
+7. Name validation removed: all 8 test_bad_names_are_rejected cases failed.
+8. The "no fields" check removed: test_edit_with_no_fields_is_a_400 failed.
+Each passed again after `git restore`.
+**Deliberate redundancy:** a deleted document is refused twice, in the route and in the SQL `WHERE deleted_at IS NULL`. Removing only one of the two changes nothing visible, so mutations 3 and 4 remove both.
+**Accepted risks:**
+- The owner can still open and download their own soft-deleted document by ID, because `authorize()` allows it.
+- There is no restore and no purge yet, so deleted file bytes stay in the database.
+- A rejected name or category returns 400 but is not audited.
+- Edit and delete share the global CSRF protection (T12) but have no CSRF test of their own.

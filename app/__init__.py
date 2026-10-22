@@ -31,6 +31,8 @@ def create_app(test_config=None):
     app.register_blueprint(auth_bp)
     app.register_blueprint(documents_bp)
     app.register_blueprint(sharing_bp)
+    from .routes.admin import bp as admin_bp
+    app.register_blueprint(admin_bp)
 
     @app.get("/")
     def index():

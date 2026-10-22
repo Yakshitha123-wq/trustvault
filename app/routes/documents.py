@@ -1,6 +1,7 @@
 import hashlib
 import io
 import secrets
+import datetime as dt
 
 from flask import Blueprint, abort, jsonify, request, send_file
 from sqlalchemy import text
@@ -59,6 +60,70 @@ def upload():
                     document_id=doc_id, ip=request.remote_addr,
                     detail={"name": name, "size": len(data), "sha256": digest})
     return jsonify(id=str(doc_id), name=name), 201
+def _like(value):
+    """Match user text literally: escape the LIKE wildcards (! is the escape character)."""
+    safe = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return f"%{safe}%"
+
+
+@bp.get("/documents")
+def list_documents():
+    user = get_current_user()
+    if user is None:
+        abort(401)
+
+    # Only fixed strings are joined into the SQL. Every user value is a bound parameter.
+    # Visible: my own documents, documents I hold a grant on, or (admins only) metadata
+    # of any document. Soft-deleted documents are never listed.
+    where = ["d.deleted_at IS NULL",
+             "(d.owner_id = :me OR g.user_id IS NOT NULL OR CAST(:is_admin AS boolean))"]
+    params = {"me": user["id"], "is_admin": user["role"] == "admin"}
+
+    q = request.args.get("q", "").strip()[:100]
+    if q:
+        where.append("d.name ILIKE :q ESCAPE '!'")
+        params["q"] = _like(q)
+    owner = request.args.get("owner", "").strip()[:100]
+    if owner:
+        where.append("u.name ILIKE :owner ESCAPE '!'")
+        params["owner"] = _like(owner)
+    category = request.args.get("category", "").strip()[:50]
+    if category:
+        where.append("d.category = :category")
+        params["category"] = category
+    for key in ("from", "to"):
+        raw = request.args.get(key, "").strip()
+        if not raw:
+            continue
+        try:
+            day = dt.date.fromisoformat(raw)
+        except ValueError:
+            return jsonify(error=f"'{key}' must be a date such as 2026-10-22."), 400
+        if key == "from":
+            where.append("d.created_at >= CAST(:date_from AS date)")
+            params["date_from"] = day
+        else:
+            where.append("d.created_at < CAST(:date_to AS date) + 1")
+            params["date_to"] = day
+
+    sql = ("SELECT d.id, d.name, d.category, d.mime_type, d.size_bytes, d.created_at, "
+           "u.name AS owner_name, "
+           "CASE WHEN d.owner_id = :me THEN 'owner' "
+           "WHEN g.permission IS NOT NULL THEN g.permission "
+           "ELSE 'metadata' END AS my_permission "
+           "FROM documents d "
+           "JOIN users u ON u.id = d.owner_id "
+           "LEFT JOIN grants g ON g.document_id = d.id AND g.user_id = :me "
+           "WHERE " + " AND ".join(where) +
+           " ORDER BY d.created_at DESC, d.id LIMIT 100")
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+
+    return jsonify(documents=[
+        {"id": str(r["id"]), "name": r["name"], "category": r["category"],
+         "mime_type": r["mime_type"], "size_bytes": r["size_bytes"],
+         "created_at": r["created_at"].isoformat(), "owner_name": r["owner_name"],
+         "my_permission": r["my_permission"]} for r in rows])
 
 
 @bp.get("/documents/<doc_id>")
@@ -67,7 +132,6 @@ def detail(doc_id):
     return jsonify(id=str(doc["id"]), name=doc["name"], category=doc["category"],
                    mime_type=doc["mime_type"], size_bytes=doc["size_bytes"],
                    created_at=doc["created_at"].isoformat())
-
 
 @bp.get("/documents/<doc_id>/download")
 def download(doc_id):

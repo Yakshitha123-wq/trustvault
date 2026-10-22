@@ -7,7 +7,15 @@ explanations. No coding agent has been used so far.
 - `AGENTS.md`: project rules (security rules, roles, working style). Committed on
   day 1. I will give it to any coding agent at the start of a session if I use one.
 
----
+## Working method (applied to every security-relevant change)
+- Write the tests first and commit them while they fail, then write the code.
+- Commit working code before any experiment, because `git restore` only brings back
+  committed code.
+- After the tests pass, break the code on purpose (mutation check), confirm the expected
+  test fails, then restore. A test that has never failed proves nothing.
+- Run `pytest --collect-only` to confirm a test is really in the file.
+
+
 
 ## Entry 1: AI silently changed the database library in AGENTS.md (2026-10-19)
 **Tool:** Claude (chat)
@@ -36,7 +44,7 @@ authorisation check, is visible in the code. I updated `AGENTS.md` to match.
 **How I checked:** I compared `AGENTS.md` with the packages in `requirements.txt`
 to confirm they agree.
 
----
+
 
 ## Entry 2: Audit writer stored a placeholder hash (2026-10-19)
 **Tool:** Claude (chat)
@@ -60,7 +68,7 @@ computes the hash, then inserts once. Also added `verify_chain`.
 
 **How I checked:** `tests/test_audit.py::test_chain_verifies_after_several_writes` passes.
 
----
+
 
 ## Entry 3: git restore wiped my uncommitted work (2026-10-19)
 **Tool:** Claude (chat)
@@ -82,7 +90,7 @@ mutation check. New rule for myself: commit before mutating, restore only afterw
 
 **How I checked:** the four tests passed again after the recreate.
 
----
+
 
 ## Entry 4: My first audit test could not fail (2026-10-19)
 **Tool:** Claude (chat)
@@ -105,7 +113,7 @@ and passed again after restoring.
 
 **How I checked:** the mutation run described above.
 
----
+
 
 ## Entry 5: authorize() depended on a field get_current_user() did not return (2026-10-20)
 **Tool:** Claude (chat)
@@ -154,7 +162,7 @@ the expected tests fail:
 5. unknown-action check replaced with `pass`: `test_unknown_action_is_denied`
 After each break I ran `git restore app/authz.py` and confirmed the tests passed again.
 
----
+
 
 ## Entry 6: Three of my new route tests passed before the route existed (2026-10-20)
 **Tool:** Claude (chat)
@@ -197,7 +205,7 @@ No mutation left every test green. After the last restore, `pytest -q` showed
 **How I checked:** the four mutation runs above, plus the 6-failed, 3-passed output
 from before the route existed.
 
----
+
 
 ## Entry 7: AI planned file storage the host would delete (2026-10-21)
 **Tool:** Claude (chat)
@@ -235,7 +243,7 @@ site I uploaded a PDF with curl, downloaded it, and the SHA-256 hashes matched. 
 Manual Deploy (Deploy latest commit) on Render and downloaded the same document again,
 and the hash was still identical.
 
----
+
 
 ## Entry 8: Every test ran with CSRF switched off, so nothing tested it (2026-10-21)
 **Tool:** Claude (chat)
@@ -252,12 +260,44 @@ that has no token. If `CSRFProtect` were removed from `create_app`, no test woul
 The AI raised this when I asked how to check upload on the live site without a browser
 form. Until then I had believed the suite covered it.
 
-**What I did instead:** I checked the live site with `curl.exe`: an upload POST without a
-token returned 400. I then added `tests/test_csrf.py`, which builds an app with CSRF left
-on. Mutation check: with `WTF_CSRF_ENABLED` set to False in that test it failed with
-201 instead of 400; restored, it passed, and the full suite was at 90 passed. Grant and
-revoke use the same global protection but have no CSRF test of their own yet.
+**What I did instead:** I checked the live site with `curl.exe`: an upload POST with no
+token and no session cookie returned 400. I then added `tests/test_csrf.py`, which builds
+an app with CSRF left on. Mutation check: with `WTF_CSRF_ENABLED` set to False in that test
+it failed with 201 instead of 400; restored, it passed, and the full suite was at 90
+passed. When I later wrote the grant and revoke tests, I added a CSRF test for each
+(tests/test_grants.py). With CSRF off in the test client, both failed with 200 instead
+of 400.
 
 **Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/8b60b8be5d0a9ee8412db3e622c55e59b8265c37
 
-**How I checked:** the live curl result and the mutation run described above.
+**How I checked:** the live curl result and the mutation runs described above.
+
+
+
+## Entry 9: No test covered an anonymous caller listing grants (2026-10-22)
+**Tool:** Claude (chat)
+**Category:** access control
+
+**What I asked:** For grant, revoke and list-grants tests written before the routes
+(tests/test_grants.py).
+
+**What it produced:** 33 tests, with anonymous tests for grant and revoke but none for
+listing grants. I committed them while they failed (20 failed, 13 passed), then added the
+routes in app/routes/sharing.py.
+
+**What was wrong:** When I removed the `authorize` call from `get_document_or_404`
+(mutation 4), 18 tests failed, but none was an anonymous list request. With the check gone,
+an anonymous caller would have received the grantees' emails and nothing would have
+failed. The AI noticed this when I pasted the mutation output; I had not noticed it myself.
+
+**What I did instead:** Added `test_anonymous_cannot_list_grants` and repeated mutation 4.
+It failed with `assert 200 in (401, 302)` (19 failed, 15 passed instead of 18 and 15), then
+passed after I restored the file.
+
+**Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/87a90752e8d60850d7055320a21e1ea6516f1f95
+
+**How I checked:** the repeated mutation run above, plus seven other mutation checks on
+the grant, revoke and list routes, each of which failed the tests it should (listed in
+THREATS.md, T13). One of them showed that the database CHECK constraint on
+`grants.permission` is a second layer: with the route's permission check removed, bad
+values failed with a database error instead of a clean 400.

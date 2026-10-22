@@ -11,10 +11,10 @@
 **Live check (2026-10-21):** on the deployed database, `has_table_privilege` for `trustvault_app` on audit_log returned SELECT t, INSERT t, UPDATE f, DELETE f.
 **Accepted risk:** someone who controls the owner account can disable the trigger and rewrite the whole chain consistently, and no test covers that. The app never uses that account. Possible later mitigation: publish the latest chain hash outside the database.
 
-## T2: Guessing or enumerating document IDs (2026-10-20, updated 2026-10-21)
+## T2: Guessing or enumerating document IDs (2026-10-20, updated 2026-10-22)
 **Attack:** a logged-in user who was not granted a document requests `/documents/<id>` or `/documents/<id>/download` with an ID they guessed, copied or enumerated. A second angle: telling "exists but forbidden" apart from "does not exist" and so learning which documents exist.
 **Defence:** IDs are UUIDs. Every request goes through `get_document_or_404` (app/access.py), which calls `authorize()` and returns the same 404 whether the document is missing or the user is not allowed. The response bodies are identical. A malformed ID also returns 404, not a 500. The JSON for the metadata route does not include `storage_key`. Admins get 404 on download, because they may see metadata only.
-**Status:** TESTED for `GET /documents/<id>` and `GET /documents/<id>/download`.
+**Status:** TESTED for `GET /documents/<id>` and `GET /documents/<id>/download`. The grant routes use the same function (see T13).
 - tests/test_documents_access.py: test_stranger_gets_404, test_missing_and_forbidden_look_identical, test_not_a_uuid_is_404_not_500, test_admin_can_see_metadata_only (no `storage_key` in the response)
 - tests/test_upload_download.py: test_stranger_cannot_download, test_anonymous_cannot_download, test_admin_cannot_download_contents, test_refused_download_is_audited
 **Mutation checks (2026-10-20 and 2026-10-21):**
@@ -26,7 +26,7 @@ Each passed again after `git restore`.
 **Accepted risks:**
 - A refused request writes an audit row and a missing-document request also does, but the forbidden path does extra work (grants lookup), so response time may differ slightly. I have not tried to hide this timing difference.
 - A malformed ID returns 404 without an audit row. Anonymous and stranger probes each write a row, so an attacker could grow the audit log. Rate limiting these routes is not built yet.
-**Not covered yet:** edit, delete, share and search do not exist, so this entry says nothing about them (see T13 and T15). Each needs the same tests when built.
+**Not covered yet:** edit, delete and search do not exist, so this entry says nothing about them (see T15). Each needs the same tests when built.
 
 ## T3: A non-owner uploads a document (2026-10-21)
 **Attack:** a viewer, an admin or an anonymous caller sends `POST /documents` directly to put files into the system.
@@ -34,10 +34,10 @@ Each passed again after `git restore`.
 **Status:** TESTED: test_viewer_cannot_upload, test_anonymous_cannot_upload, test_admin_cannot_upload.
 **Mutation check (2026-10-21):** I removed the owner-role check. test_viewer_cannot_upload failed with 201 instead of 403. Restored, it passed.
 
-## T4: Access still works after it was revoked (2026-10-20, updated 2026-10-21)
+## T4: Access still works after it was revoked (2026-10-20, updated 2026-10-22)
 **Attack:** a user who was granted access keeps using it after the owner removes the grant, for example with the same session cookie.
 **Defence:** grants are not stored in the session. `get_document_or_404` reads the grants for the document from the database on every request, so a deleted grant has no effect on the next request. The cost is one extra query per document request.
-**Status:** TESTED for the metadata route and the download route: test_revocation_is_immediate (metadata) and test_revoked_download_is_immediate (download). Each gets a 200, deletes the grant, and then expects a 404 on the same client with the same cookie. These tests delete the grant row directly. The revoke route itself is not built yet (see T13).
+**Status:** TESTED for the metadata route and the download route: test_revocation_is_immediate (metadata) and test_revoked_download_is_immediate (download). Each gets a 200, deletes the grant row, and then expects a 404 on the same client with the same cookie. The revoke route is tested the same way in tests/test_grants.py (test_owner_revoke_takes_effect_immediately, see T13).
 **Mutation checks:** forcing `grants = {}` before the authorize call failed test_revocation_is_immediate and test_reader_can_see_metadata (2026-10-20). Removing the authorize call also failed test_revoked_download_is_immediate (2026-10-21). Each passed again after restoring.
 **Accepted risk:** the access check and the file read are two separate transactions, so a revoke landing in the milliseconds between them still lets that one download through, and its audit row records it. Once the bytes are sent there is nothing to take back.
 **Not covered yet:** a route-level test for a disabled user (the `is_active` check is unit-tested in tests/test_authz.py and through a real session in tests/test_session_user.py, but not through a document route).
@@ -71,12 +71,12 @@ Each passed again after `git restore`.
 - A failed login stores the email that was typed. If someone types a password into the email box, it lands in the permanent audit log.
 - An unknown email skips the password check, so its response is slightly faster than a wrong password for a real account. I have not tried to hide this timing difference.
 
-## T9: Access leaves no record (2026-10-21)
-**Attack:** someone uploads, downloads or probes a document and afterwards nobody can say who did it, or refused attempts leave no trace.
-**Defence:** every upload and download writes an `allowed` audit row in the same transaction as the action, so if the audit write fails the action fails. Every refused document request writes a `denied` row (action `document_access`) before the 404 or 401 is returned. Rows are hash-chained (T1).
-**Status:** TESTED for upload, download and refused access: test_upload_is_audited, test_successful_download_is_audited, test_refused_download_is_audited, test_refused_attempt_is_audited.
-**Mutation checks:** removing the `write_audit` call from `get_document_or_404` failed only test_refused_attempt_is_audited (2026-10-20). Removing it from the download route failed test_successful_download_is_audited (2026-10-21). Each passed again after restoring.
-**Not covered yet:** grant, revoke, edit and delete (see T13 and T15). Login success and failure are audited, but no automated test checks them. Rate-limited logins (429) and requests over the size cap (413) are not recorded.
+## T9: Access leaves no record (2026-10-21, updated 2026-10-22)
+**Attack:** someone uploads, downloads, shares or probes a document and afterwards nobody can say who did it, or refused attempts leave no trace.
+**Defence:** every upload, download, grant and revoke writes an `allowed` audit row in the same transaction as the action, so if the audit write fails the action fails. Grant and revoke rows name the person affected and the permission. Every refused document request writes a `denied` row (action `document_access`) before the 404 or 401 is returned. Rows are hash-chained (T1).
+**Status:** TESTED for upload, download, grant, revoke and refused access: test_upload_is_audited, test_successful_download_is_audited, test_refused_download_is_audited, test_refused_attempt_is_audited, test_grant_is_audited, test_grant_audit_row_names_the_person_and_level, test_revoke_is_audited, test_refused_grant_attempt_is_audited.
+**Mutation checks:** removing the `write_audit` call from `get_document_or_404` failed only test_refused_attempt_is_audited (2026-10-20). Removing it from the download route failed test_successful_download_is_audited, and removing it from grant and revoke failed their audit tests (2026-10-21). Each passed again after restoring.
+**Not covered yet:** edit and delete (not built, see T15). Login success and failure are audited, but no automated test checks them. Rate-limited logins (429), requests over the size cap (413) and account registration are not recorded.
 
 ## T10: Known demo credentials on the live site (2026-10-21)
 **Attack:** anyone who reads the README logs in as a demo user and tries to do more than demo data allows.
@@ -94,25 +94,36 @@ Each passed again after `git restore`.
 - The free database expires on 19 November 2026.
 **Status:** DONE (manual checks, no automated test).
 
-## T12: Cross-site request forgery on state-changing routes (2026-10-21)
-**Attack:** a malicious page makes a logged-in user's browser send a POST to TrustVault (upload now, grant and revoke later), using their session cookie.
+## T12: Cross-site request forgery on state-changing routes (2026-10-21, updated 2026-10-22)
+**Attack:** a malicious page makes a logged-in user's browser send a POST to TrustVault (upload, grant or revoke), using their session cookie.
 **Defence:** `CSRFProtect` is enabled for the whole app (app/__init__.py). Every POST needs a valid token, and Flask-WTF also checks the Referer over HTTPS. The session cookie is HttpOnly and SameSite=Lax.
-**Status:** TESTED for `POST /documents` only: tests/test_csrf.py::test_post_without_csrf_token_is_rejected builds an app with CSRF left on and expects 400. The cookie flags are tested in tests/test_session_cookie.py.
-**Mutation checks (2026-10-21):** with `WTF_CSRF_ENABLED` set to False in the CSRF test, it failed (201 instead of 400). In the cookie test, `httponly=False` failed the HttpOnly assertion and `samesite="None"` failed the SameSite assertion. Each passed again after restoring.
+**Status:** TESTED for upload, grant and revoke: tests/test_csrf.py::test_post_without_csrf_token_is_rejected, and test_grant_without_csrf_token_is_rejected and test_revoke_without_csrf_token_is_rejected in tests/test_grants.py. Each builds an app with CSRF left on and expects 400. The cookie flags are tested in tests/test_session_cookie.py.
+**Mutation checks (2026-10-21):** with CSRF switched off in the test app, the upload test failed (201 instead of 400) and both grant and revoke tests failed (200 instead of 400). In the cookie test, `httponly=False` failed the HttpOnly assertion and `samesite="None"` failed the SameSite assertion. Each passed again after restoring.
 **Live check (2026-10-21):** a curl upload to the deployed site with no CSRF token and no session cookie returned 400. Without CSRF an anonymous upload would have returned 401 from the route, so the CSRF check runs first. I did not repeat this while logged in.
-**Not covered:** every other test runs with CSRF switched off in conftest.py. CSRF tests for grant and revoke are written (tests/test_grants.py) but fail until those routes exist (T13). The cookie test does not check the Secure flag, which is only set over HTTPS, and I have not checked it on the live site.
+**Not covered:** login and logout have no CSRF test of their own, and every other test runs with CSRF switched off in conftest.py. Edit and delete do not exist yet. The cookie test does not check the Secure flag, which is only set over HTTPS, and I have not checked it on the live site.
 
-## T13: Someone who is not the owner changes who has access (2026-10-21)
+## T13: Someone who is not the owner changes who has access (2026-10-21, updated 2026-10-22)
 **Attack:** a reader, an editor, an admin, another owner or an anonymous caller grants themselves or someone else access, upgrades their own grant from read to edit, revokes another person's access, or lists who has access. A forged cross-site POST does the same through the owner's browser.
-**Defence (planned):** the grant, revoke and list routes call `get_document_or_404` with the `share` action, which only the owner has, so everyone else gets the same 404 as for a missing document. Authorisation runs before input is checked, so a bad value cannot be used to probe. Each change and its audit row commit in one transaction. CSRF protection is global (T12).
-**Status:** PLANNED. The routes are not built. The tests were written first (tests/test_grants.py, 33 cases) and run before any route existed: 20 failed and 13 passed. The 13 passes are the non-owner refusals, which pass only because a missing route also returns 404, so they prove nothing until a mutation check shows they can fail.
-**Known weaknesses I am accepting:** an `edit` grant is stored and checked, but no edit route exists yet, so it currently gives the same access as `read`. Granting by email tells an owner whether an address is registered.
+**Defence:** the grant, revoke and list routes (app/routes/sharing.py) call `get_document_or_404` with the `share` action, which only the owner has. Everyone else gets the same 404 as for a missing document, and an anonymous caller gets 401. Authorisation runs before input is checked, so a bad value cannot be used to probe a document. Each change and its audit row commit in one transaction. A second layer: the `grants.permission` column has a CHECK constraint that allows only read or edit.
+**Status:** TESTED in tests/test_grants.py (34 cases): grant and revoke take effect on the next request with the same cookie; reader, stranger, admin and other owner are refused for grant, revoke and list; anonymous callers are refused for all three; a reader cannot upgrade their own grant; invalid permissions, an unknown email, a grant to the owner and a missing grant are rejected; grant and revoke are audited, including who and what level; a refused attempt is audited; grant and revoke without a CSRF token return 400.
+**Written tests-first:** the file was committed before the routes existed. On that first run 20 failed and 13 passed. The 13 were the non-owner refusals, which passed only because a missing route also returns 404. The mutation checks below show they can now fail.
+**Mutation checks (2026-10-21), restoring after each:**
+1. `share` changed to `read` in grant: test_non_owner_cannot_grant[reader] and test_reader_cannot_upgrade_their_own_grant failed.
+2. Same change in revoke: test_non_owner_cannot_revoke[reader] failed.
+3. Same change in list_grants: test_non_owner_cannot_list_grants[reader] failed.
+4. Removed the `authorize` call from `get_document_or_404`: 18 failed, 15 passed (every non-owner case for all three routes, both owner-effect tests, anonymous grant and revoke, and the refused-attempt audit).
+5. Removed `write_audit` from grant: the two grant audit tests failed.
+6. Removed `write_audit` from revoke: test_revoke_is_audited failed.
+7. Removed the permission check from the route: the five invalid-permission tests failed, because the database CHECK constraint rejected the insert (IntegrityError). So the constraint is a real second layer, but without the route's check a bad value would cause a server error instead of a 400.
+8. Turned CSRF off in the test client: both CSRF tests failed with 200 instead of 400.
+**Gap found by mutation 4 and closed:** with the `authorize` call removed, an anonymous request to list grants returned 200 and the grantees' emails, and no test failed, because only anonymous grant and revoke were tested. I added test_anonymous_cannot_list_grants. Repeating mutation 4, it failed with `assert 200 in (401, 302)` (19 failed, 15 passed), and it passed again after restoring.
+**Not covered:** an `edit` grant is stored and checked, but no edit route exists yet, so it currently gives the same access as `read`. The code refuses a disabled user as the target of a grant, but no test says so. Granting by email tells an owner whether an address is registered, which I accept. There is no limit on the number of grants per document and no rate limit on these routes.
 
 ## T14: Registering as a more powerful role (2026-10-21)
 **Attack:** a request to `/register` carries `role=admin` or `role=owner`, hoping the server copies it into the new account (mass assignment).
 **Defence:** the register route writes the role `viewer` in its SQL and never reads a role from the request (app/routes/auth_routes.py).
 **Status:** TESTED: tests/test_register.py::test_register_ignores_a_role_field posts `role=admin` and checks the stored role is `viewer`.
-**Mutation check (2026-10-21):** I changed the INSERT to take the role from the form; the test failed because the role was `admin`. After `git restore` it passed again.
+**Mutation check (2026-10-21):** I changed the INSERT to take the role from the form; the test failed with `assert 'admin' == 'viewer'`. After `git restore` it passed again.
 **Known gaps:** registration is not rate limited and does not write an audit row, so someone can create accounts without leaving a record. I accept this for now. New accounts can only be viewers, and a viewer sees only what an owner grants.
 
 ## T15: Edit, delete, document list and search (2026-10-21)

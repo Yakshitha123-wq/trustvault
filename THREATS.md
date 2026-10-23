@@ -76,14 +76,14 @@ Each passed again after `git restore`.
 **Defence:** every upload, download, grant and revoke writes an `allowed` audit row in the same transaction as the action, so if the audit write fails the action fails. Grant and revoke rows name the person affected and the permission. Every refused document request writes a `denied` row (action `document_access`) before the 404 or 401 is returned. Rows are hash-chained (T1).
 **Status:** TESTED for upload, download, grant, revoke and refused access: test_upload_is_audited, test_successful_download_is_audited, test_refused_download_is_audited, test_refused_attempt_is_audited, test_grant_is_audited, test_grant_audit_row_names_the_person_and_level, test_revoke_is_audited, test_refused_grant_attempt_is_audited.
 **Mutation checks:** removing the `write_audit` call from `get_document_or_404` failed only test_refused_attempt_is_audited (2026-10-20). Removing it from the download route failed test_successful_download_is_audited, and removing it from grant and revoke failed their audit tests (2026-10-21). Each passed again after restoring.
-**Also covered:** edit and delete are audited in the same transaction (test_edit_is_audited, test_delete_is_audited, test_refused_edit_and_delete_are_audited, see T16).
+**Also covered:** edit and delete are audited in the same transaction (test_edit_is_audited, test_delete_is_audited, test_refused_edit_and_delete_are_audited, see T16).Viewing the activity, running the chain check and refused attempts at the admin routes are audited too (T17).
 **Not covered:** list and search are not audited. Login success and failure are audited, but no automated test checks them. Anonymous upload refusals, rate-limited logins (429), requests over the size cap (413) and account registration are not recorded.
 
 ## T10: Known demo credentials on the live site (2026-10-21)
 **Attack:** anyone who reads the README logs in as a demo user and tries to do more than demo data allows.
-**Defence:** the brief requires one account per role, so this cannot be removed. Passwords are random (scripts/seed.py, scripts/reset_password.py). The admin cannot read file contents without a grant, and the viewer sees only what is granted. Login is rate limited (T8).
+**Defence:** the brief requires one account per role, so this cannot be removed. Passwords are random (scripts/seed.py, scripts/reset_password.py). A viewer sees only what is granted and an owner only their own documents. The admin cannot read file contents, but can see the name, owner and category of every non-deleted document (T15) and read the whole audit trail (T17). Login is rate limited (T8).
 **Status:** ACCEPTED (required by the brief). No automated test.
-**Accepted risk:** anyone can act as these users, including uploading as the owner. The accounts should be deleted or have their passwords changed after judging.
+**Accepted risk:** anyone can act as these users, including uploading as the owner and reading the audit trail as the admin. The accounts should be deleted or have their passwords changed after judging.
 
 ## T11: Credentials exposed during setup (2026-10-20, updated 2026-10-21)
 **What happened:** while deploying, the Render database owner URL and the `trustvault_app` password were pasted into an AI chat. A local `postgres` password was also typed into a command that was pasted there.
@@ -169,22 +169,28 @@ Each passed again after `git restore`.
 - A rejected name or category returns 400 but is not audited.
 - Edit and delete share the global CSRF protection (T12) but have no CSRF test of their own.
 
-## T17: Reading the audit trail, and who may (2026-10-22)
-**Attack:** a non-admin or anonymous caller opens the activity view or the chain check to see who did what; filter text is used for SQL injection; `limit` or `before_id` is used to pull the whole table; the view leaks content hashes.
-**Defence:** GET /admin/activity and GET /admin/audit/verify (app/routes/admin.py) call `authorize()` with the `view_audit` action, which only an admin holds. Anonymous callers get 401. Everyone else gets 404, and the refusal is written to the audit log (action `admin_access`, outcome `denied`). Every filter is a bound parameter. `document_id`, `actor_id`, `outcome`, dates, `limit` and `before_id` are validated and bad values return 400. `limit` is capped at 500, results are newest first, and paging uses `before_id`. The `sha256` field is removed from each event. Viewing the activity and running the chain check are themselves audited in the same transaction as the read, so if the audit write fails nothing is returned.
-**Status:** TESTED in tests/test_admin_activity.py (26 tests). A document's history shows who uploaded, downloaded, granted and revoked, and permission changes name both the actor and the person affected.
+## T17: Reading the audit trail, and reading it without permission (2026-10-22)
+**Attack:** a non-admin (owner, reader, stranger, another owner) or an anonymous caller opens the admin activity view or the verify route to read who touched which document. An admin reads more than they should (file contents, content hashes). A reader of the trail leaves no trace of having looked.
+**Defence:** `GET /admin/activity` and `GET /admin/audit/verify` (app/routes/admin.py) call `authorize()` with the `view_audit` action, which only an active admin holds. Anonymous callers get 401. Everyone else gets 404, so the admin area is not advertised, and the refusal is written to the audit log (`admin_access`, denied). Reading the trail is itself audited: the read and its audit row commit in one transaction (`audit_view`, `audit_verify`), so there is no answer without a record. Filter values are bound parameters; bad values return 400; page size is capped at 500. The view never returns file contents, `storage_key`, the content hash, or the chain hashes.
+**Status:** TESTED in tests/test_admin_activity.py (26 tests). Written tests-first. The first run before the routes existed was 22 failed and 4 passed; the 4 were the non-admin refusals, which pass only because a missing route also returns 404.
 **Mutation checks (2026-10-22), restoring after each:**
-1. Admin check made to refuse everyone: 20 failed, 6 passed (every admin request got 404).
-2. `authorize` removed from `_require_admin`: 5 failed (owner, reader, stranger and other owner got 200, and the refusal was not audited).
-3. Login check removed: test_anonymous_is_refused failed with a TypeError, so that check has to stay first.
-4. `write_audit` removed from the activity route, from verify, and from the refusal: each failed its own audit test (test_viewing_the_activity_is_audited, test_verify_reports_an_intact_chain_and_is_audited, test_refused_admin_attempt_is_audited).
-5. The sha256 filter removed: test_no_hashes_or_storage_keys failed.
-6. The `outcome` check removed: test_bad_filters_are_400[params2] failed (200 instead of 400).
-7. Order changed to oldest first: test_newest_first and test_paging_with_before_id failed.
-8. The limit cap removed: test_limit_is_respected_and_capped failed (4 events instead of 3).
+1. `view_audit` changed to `read`: 20 failed (every admin test gets 404).
+2. The whole `authorize` block deleted: 5 failed (all four non-admin tests got 200, and the refusal audit).
+3. The 401 check deleted: test_anonymous_is_refused failed with a server error, so the route fails closed.
+4. The audit write in the refusal block deleted: test_refused_admin_attempt_is_audited failed.
+5. The audit write in `activity` deleted: test_viewing_the_activity_is_audited failed.
+6. The audit write in `verify` deleted: test_verify_reports_an_intact_chain_and_is_audited failed.
+7. The `sha256` filter removed: test_no_hashes_or_storage_keys failed.
+8. The `outcome` check deleted: test_bad_filters_are_400[outcome] failed.
+9. Sort order reversed: test_newest_first and test_paging_with_before_id failed.
+10. Page cap removed: test_limit_is_respected_and_capped failed.
+**Weak test found and fixed before the routes existed:** my first limit test only failed if the table held more than 500 rows, so it could have passed with no cap in the code. I rewrote it to lower the cap to 3 with `monkeypatch`, and mutation 10 then failed it.
 **Accepted risks:**
-- The demo admin credentials are public in the README (T10), so anyone can read the whole audit trail, including IP addresses and any email typed at a login.
-- Failed-login rows hold the typed email (T8), and the admin sees it.
-- /admin/audit/verify loads every row into memory. That is fine at this size and would not scale.
-- GET /admin/audit/verify writes an audit row on each call, a GET with a side effect. A cross-site request can only add noise rows.
-- No rate limit on the admin routes, and no summary of "notable" events: the admin filters by hand (for example `outcome=denied`).
+- The detail of an event can contain document names (upload, edit), even for a document that is later soft-deleted, so an admin can see names that the document list hides.
+- A failed login stores the email as typed (T8). If someone typed a password into the email box, an admin can now read it in this view.
+- The admin also sees IP addresses.
+- `verify` reads the whole audit table, so it gets slower as the log grows. The route test only checks an intact chain; tampering is tested at function level in tests/test_audit.py, not through the route.
+- Every view adds an audit row, and nothing rate limits these routes.
+- There is a single admin role with no second approver, and no alerting. "Something worth noticing" is left to the admin to filter for, for example `outcome=denied`.
+- The demo admin password is in the README (T10), so anyone who reads it can read the whole audit trail: document names, IP addresses and emails typed at failed logins. I accept this because the brief requires a credential for each role, and the accounts should be deleted or have their passwords changed after judging.
+- /admin/audit/verify is a GET that writes an audit row. A cross-site link could make a logged-in admin's browser add a row, but it cannot read the response.

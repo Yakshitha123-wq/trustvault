@@ -11,6 +11,7 @@ from ..audit import write_audit
 from ..auth import get_current_user
 from ..db import get_engine
 from ..validation import MAX_BYTES, UploadError, validate_upload
+from ..authz import authorize
 
 bp = Blueprint("documents", __name__)
 
@@ -129,9 +130,16 @@ def list_documents():
 @bp.get("/documents/<doc_id>")
 def detail(doc_id):
     user, doc = get_document_or_404(doc_id, "view_meta")
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text("SELECT user_id, permission FROM grants WHERE document_id = :d"),
+            {"d": doc["id"]}).mappings().all()
+    grants = {str(r["user_id"]): r["permission"] for r in rows}
+    # The same function that guards every route decides what the page offers.
+    can = {a: authorize(user, doc, a, grants) for a in ("read", "edit", "delete", "share")}
     return jsonify(id=str(doc["id"]), name=doc["name"], category=doc["category"],
                    mime_type=doc["mime_type"], size_bytes=doc["size_bytes"],
-                   created_at=doc["created_at"].isoformat())
+                   created_at=doc["created_at"].isoformat(), can=can)
 def _clean_name(new_name, current_name):
     """Return the cleaned name, or None if it is not acceptable.
     The name must keep the document's current extension, so a .pdf cannot be

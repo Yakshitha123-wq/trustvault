@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Activity - TrustVault{% endblock %}
+{% block content %}
+<h1>Document activity and permission changes</h1>
+<section class="card">
+  <div class="row">
+    <button id="verify" type="button">Verify audit chain</button>
+    <button type="button" class="secondary" data-set="outcome=denied">Denied attempts</button>
+    <button type="button" class="secondary" data-set="action=grant">Grants</button>
+    <button type="button" class="secondary" data-set="action=revoke">Revokes</button>
+    <button type="button" class="secondary" data-set="action=download">Downloads</button>
+  </div>
+  <p id="verifyBox" class="msg" hidden></p>
+</section>
+<form id="filters" class="filters card">
+  <label>Document id <input id="f-document_id" maxlength="36"></label>
+  <label>Actor id <input id="f-actor_id" maxlength="36"></label>
+  <label>Action <input id="f-action" maxlength="50"></label>
+  <label>Outcome
+    <select id="f-outcome">
+      <option value="">Any</option><option value="allowed">allowed</option><option value="denied">denied</option>
+    </select></label>
+  <label>From <input id="f-from" type="date"></label>
+  <label>To <input id="f-to" type="date"></label>
+  <label>Rows
+    <select id="f-limit">
+      <option value="50">50</option><option value="100" selected>100</option><option value="500">500</option>
+    </select></label>
+  <button type="submit">Search</button>
+  <button type="reset" class="secondary">Clear</button>
+</form>
+<p id="statusBox" class="msg" hidden></p>
+<div class="scroll">
+  <table>
+    <thead><tr><th>ID</th><th>Time</th><th>Who</th><th>Action</th><th>Outcome</th><th>Document</th><th>Affected user</th><th>IP</th><th>Detail</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<p><button id="older" type="button" class="secondary" hidden>Older events</button></p>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='admin.js') }}"></script>{% endblock %}

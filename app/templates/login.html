@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Log in - TrustVault{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Log in</h1>
+  {% if error %}<p class="msg error">{{ error }}</p>{% endif %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Email <input name="email" type="email" required autocomplete="username"></label>
+    <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+    <button type="submit">Log in</button>
+  </form>
+  <p class="msg info">No account? <a href="{{ url_for('auth.register') }}">Register</a>. New accounts can only see what is shared with them.</p>
+</section>
+{% endblock %}

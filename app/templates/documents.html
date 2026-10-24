@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Documents - TrustVault{% endblock %}
+{% block content %}
+<h1>Documents</h1>
+<form id="filters" class="filters card">
+  <label>Name <input name="q" maxlength="100"></label>
+  <label>Owner <input name="owner" maxlength="100"></label>
+  <label>Category <input name="category" maxlength="50"></label>
+  <label>From <input name="from" type="date"></label>
+  <label>To <input name="to" type="date"></label>
+  <button type="submit">Search</button>
+  <button type="reset" class="secondary">Clear</button>
+</form>
+<p id="statusBox" class="msg" hidden></p>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Name</th><th>Category</th><th>Owner</th><th>Size</th><th>Uploaded</th><th>Your access</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='documents.js') }}"></script>{% endblock %}

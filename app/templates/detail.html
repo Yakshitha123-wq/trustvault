@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Document - TrustVault{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('ui.documents_page') }}">&larr; All documents</a></p>
+<section id="detail" data-doc-id="{{ doc_id }}">
+  <h1 id="title">Document</h1>
+  <p id="statusBox" class="msg" hidden></p>
+  <dl id="facts" class="facts"></dl>
+  <div id="actions" class="row"></div>
+
+  <section id="edit-section" class="card" hidden>
+    <h2>Rename or recategorise</h2>
+    <form id="edit-form">
+      <label>Name <input id="edit-name" maxlength="100"></label>
+      <label>Category <input id="edit-category" maxlength="50"></label>
+      <button type="submit">Save</button>
+    </form>
+  </section>
+
+  <section id="share-section" class="card" hidden>
+    <h2>Who has access</h2>
+    <p id="shareStatus" class="msg" hidden></p>
+    <div class="scroll"><table>
+      <thead><tr><th>Email</th><th>Name</th><th>Access</th><th></th></tr></thead>
+      <tbody id="grants"></tbody>
+    </table></div>
+    <form id="grant-form">
+      <label>Email <input id="grant-email" type="email" required maxlength="254"></label>
+      <label>Access
+        <select id="grant-permission">
+          <option value="read">Read</option>
+          <option value="edit">Read and edit</option>
+        </select></label>
+      <button type="submit">Give access</button>
+    </form>
+  </section>
+
+  <section id="delete-section" class="card" hidden>
+    <button id="delete-btn" type="button" class="danger">Delete this document</button>
+  </section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='detail.js') }}"></script>{% endblock %}

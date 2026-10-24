@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Upload - TrustVault{% endblock %}
+{% block content %}
+<h1>Upload a document</h1>
+{% if show_upload %}
+<section class="card">
+  <form id="upload">
+    <label>File (pdf, png, jpg, txt, up to 5 MB)
+      <input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required></label>
+    <label>Category <input name="category" maxlength="50" placeholder="general"></label>
+    <button type="submit">Upload</button>
+  </form>
+  <p id="statusBox" class="msg" hidden></p>
+</section>
+{% else %}
+<p class="msg info">Only owners can upload documents. Ask an owner to share one with you.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if show_upload %}<script src="{{ url_for('static', filename='upload.js') }}"></script>{% endif %}{% endblock %}

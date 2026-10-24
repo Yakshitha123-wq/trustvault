@@ -38,7 +38,7 @@ def register():
 def login():
     if request.method != "POST":      # HEAD and GET only show the form
         return render_template("login.html", error=None)
-    email = request.form.get("email", "").strip()
+    email = request.form.get("email", "").strip()[:254]
     password = request.form.get("password", "")
     with get_engine().begin() as conn:
         user = conn.execute(

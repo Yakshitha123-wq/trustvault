@@ -4,8 +4,8 @@ from app import create_app
 
 
 def _app():
-    return create_app({"TESTING": True, "WTF_CSRF_ENABLED": False})  # rate limit stays ON
-
+    return create_app({"TESTING": True, "WTF_CSRF_ENABLED": False,
+                       "RATELIMIT_ENABLED": True})
 
 def _email():
     return f"{uuid.uuid4().hex}@test.example"   # unique, so counters never leak between tests

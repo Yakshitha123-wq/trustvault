@@ -63,8 +63,8 @@ Each passed again after `git restore`.
 
 ## T8: Brute-force login and account probing (2026-10-19, updated 2026-10-21)
 **Attack:** guessing passwords by repeated POSTs to /login, or telling registered emails from unregistered ones.
-**Defence:** Flask-Limiter, 5 POSTs per minute per IP (app/routes/auth_routes.py). An unknown email and a wrong password give the same message and the same status.
-**Status:** BUILT, observed manually (6th attempt returned 429). Automated test PLANNED.
+**Defence:** “5 attempts per minute per account (lower-cased email) and 60 per minute per address (app/routes/auth_routes.py). An unknown email and a wrong password give the same message and status.”
+**Status:** “TESTED in tests/test_login_limit.py (4 tests), with mutation checks (see T18).”
 **Known weaknesses:**
 - The limit is per IP, so shared networks share a counter, and memory storage is per process and resets on restart.
 - 429 responses are not written to the audit log.
@@ -195,3 +195,27 @@ Each passed again after `git restore`.
 - There is a single admin role with no second approver, and no alerting. "Something worth noticing" is left to the admin to filter for, for example `outcome=denied`.
 - The demo admin password is in the README (T10), so anyone who reads it can read the whole audit trail: document names, IP addresses and emails typed at failed logins. I accept this because the brief requires a credential for each role, and the accounts should be deleted or have their passwords changed after judging.
 - /admin/audit/verify is a GET that writes an audit row. A cross-site link could make a logged-in admin's browser add a row, but it cannot read the response.
+
+## T18: Attacking the deployed site as each role (2026-10-24)
+**What I did:** with the browser console on the live site I called nine routes as the reader, the editor, the stranger, the admin and an anonymous user, and checked headers and anonymous requests with curl. Then I read the admin activity page to see whether each probe was recorded.
+**Results:**
+- Reader: detail and download 200; list grants, edit, self-grant 404; upload 403; admin routes 404.
+- Editor (a viewer with an edit grant): as the reader, but edit 200.
+- Stranger (the same account after the grant was removed): detail, download and every other route 404. The grant removal took effect on the next request.
+- Admin: detail 200, download 404, grants, edit and self-grant 404, upload 403, activity and verify 200.
+- Anonymous: every route 401.
+- A POST without a CSRF token returned 400 for every role while logged in, so CSRF is enforced on the live site for logged-in users (closes the gap noted in T12).
+- Owner: <fill in the owner run, or delete this line>.
+**Audit check:** every refused attempt appears on the admin page with the right person, action and document, in the order I made them, and "Verify audit chain" reported the chain intact. Anonymous upload and admin attempts (401) are not recorded, as T3 and T17 say.
+**Headers on the live login page:** Content-Security-Policy with script-src 'self', X-Frame-Options DENY, Referrer-Policy same-origin, X-Content-Type-Options nosniff, Cache-Control no-store and Strict-Transport-Security.
+**Findings and what I did:**
+1. The audit log's IP column held Render's internal addresses (10.x), and one user's requests within one second showed different ones. `ProxyFix(x_for=1)` does not give the real caller on Render. I added `client_ip()` (app/clientip.py), which reads Cloudflare's CF-Connecting-IP only when TRUST_CF_CONNECTING_IP is switched on, validates it as an address, and falls back to the connection address otherwise. Tested in tests/test_client_ip.py. <live result of the spoof check: fill in what you saw>
+2. The login limit counted per address, so on Render everyone shared a few counters: strangers could lock each other out, and an attacker spread over them gets several times the allowance. The limit is now 5 attempts per minute per account (lower-cased email), plus a coarse 60 per minute per address. Tested in tests/test_login_limit.py. The cost: anyone can keep a named account at its limit, so it will answer 429 for a minute at a time.
+3. The Flask `session` cookie, which carries the CSRF secret, had no Secure flag. It now does on Render (COOKIE_SECURE=1). Tested in tests/test_cookie_flags.py.
+**Mutation checks (2026-10-24):** <fill in from the table above>
+**Accepted risks:**
+- If Render stops using Cloudflare, or Cloudflare stops sending CF-Connecting-IP, the audit falls back to Render's internal addresses without any error.
+- Registration is still not rate limited.
+- The limit is kept in memory, one process, and resets on every restart.
+- 429 refusals are not audited.
+**Not covered:** the browser pass (hostile names in the list, detail and activity pages, the Back button after logout, role buttons, an expired token) is recorded in T19.

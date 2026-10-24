@@ -12,3 +12,6 @@ def test_session_cookie_is_httponly_and_samesite(app, people):
     cookie = r.headers["Set-Cookie"]
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
+def test_csrf_cookie_is_samesite_lax(client_for):
+    cookie = client_for(None).get("/login").headers.get("Set-Cookie", "")
+    assert "SameSite=Lax" in cookie

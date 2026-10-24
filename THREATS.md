@@ -184,6 +184,7 @@ Each passed again after `git restore`.
 8. The `outcome` check deleted: test_bad_filters_are_400[outcome] failed.
 9. Sort order reversed: test_newest_first and test_paging_with_before_id failed.
 10. Page cap removed: test_limit_is_respected_and_capped failed.
+**Live check (2026-10-23):** on the deployed site an anonymous request to `/admin/activity` and to `/documents` returned 401. Logged in as the demo admin, `/admin/activity` returned events and `/admin/audit/verify` returned `{"first_bad_row":null,"intact":true}`. The check wrote `audit_view` and `audit_verify` rows to the live audit log. I did not test the admin routes on the live site as a non-admin.
 **Weak test found and fixed before the routes existed:** my first limit test only failed if the table held more than 500 rows, so it could have passed with no cap in the code. I rewrote it to lower the cap to 3 with `monkeypatch`, and mutation 10 then failed it.
 **Accepted risks:**
 - The detail of an event can contain document names (upload, edit), even for a document that is later soft-deleted, so an admin can see names that the document list hides.

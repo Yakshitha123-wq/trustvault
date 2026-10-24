@@ -7,6 +7,7 @@ from .audit import write_audit
 from .auth import get_current_user
 from .authz import authorize
 from .db import get_engine
+from .clientip import client_ip
 
 
 def get_document_or_404(doc_id, action):
@@ -43,6 +44,6 @@ def get_document_or_404(doc_id, action):
     with get_engine().begin() as conn:
         write_audit(conn, actor_id=user["id"] if user else None,
                     action="document_access", outcome="denied",
-                    document_id=doc_id, ip=request.remote_addr,
+                    document_id=doc_id, ip=client_ip(),
                     detail={"action": action})
     abort(401 if user is None else 404)

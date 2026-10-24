@@ -12,6 +12,7 @@ from ..auth import get_current_user
 from ..db import get_engine
 from ..validation import MAX_BYTES, UploadError, validate_upload
 from ..authz import authorize
+from ..clientip import client_ip
 
 bp = Blueprint("documents", __name__)
 
@@ -20,7 +21,7 @@ def _audit_refusal(user, action, detail, document_id=None):
     with get_engine().begin() as conn:
         write_audit(conn, actor_id=user["id"] if user else None, action=action,
                     outcome="denied", document_id=document_id,
-                    ip=request.remote_addr, detail=detail)
+                    ip=client_ip(), detail=detail)
 
 
 @bp.post("/documents")
@@ -58,7 +59,7 @@ def upload():
             text("INSERT INTO document_blobs (document_id, content) VALUES (:d, :c)"),
             {"d": doc_id, "c": data})
         write_audit(conn, actor_id=user["id"], action="upload", outcome="allowed",
-                    document_id=doc_id, ip=request.remote_addr,
+                    document_id=doc_id, ip=client_ip(),
                     detail={"name": name, "size": len(data), "sha256": digest})
     return jsonify(id=str(doc_id), name=name), 201
 def _like(value):
@@ -190,7 +191,7 @@ def edit(doc_id):
         if changed != 1:
             abort(404)
         write_audit(conn, actor_id=user["id"], action="edit", outcome="allowed",
-                    document_id=doc["id"], ip=request.remote_addr,
+                    document_id=doc["id"], ip=client_ip(),
                     detail={"old_name": doc["name"], "name": name,
                             "old_category": doc["category"], "category": category})
     return jsonify(id=str(doc["id"]), name=name, category=category)
@@ -212,7 +213,7 @@ def delete(doc_id):
         if changed != 1:
             abort(404)
         write_audit(conn, actor_id=user["id"], action="delete", outcome="allowed",
-                    document_id=doc["id"], ip=request.remote_addr,
+                    document_id=doc["id"], ip=client_ip(),
                     detail={"name": doc["name"]})
     return jsonify(id=str(doc["id"]), deleted=True)
 
@@ -229,7 +230,7 @@ def download(doc_id):
             abort(404)
         # If this audit write fails, the exception stops the request and no bytes are sent.
         write_audit(conn, actor_id=user["id"], action="download", outcome="allowed",
-                    document_id=doc["id"], ip=request.remote_addr,
+                    document_id=doc["id"], ip=client_ip(),
                     detail={"name": doc["name"]})
 
     resp = send_file(io.BytesIO(bytes(content)), mimetype=doc["mime_type"],

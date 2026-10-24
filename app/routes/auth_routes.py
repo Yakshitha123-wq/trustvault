@@ -6,6 +6,7 @@ from ..audit import write_audit
 from ..auth import (COOKIE_NAME, SESSION_HOURS, create_session, delete_session,
                     get_current_user, hash_password, verify_password)
 from ..db import get_engine
+from ..clientip import client_ip
 
 bp = Blueprint("auth", __name__)
 
@@ -31,10 +32,16 @@ def register():
                  "VALUES (:e, :n, :p, 'viewer')"),
             {"e": email, "n": name, "p": hash_password(password)})
     return redirect(url_for("auth.login"))
+def _account_key():
+    """One counter per account being tried, whatever address the attempts come from."""
+    return "login:" + request.form.get("email", "").strip().lower()[:254]
+
+
 
 
 @bp.route("/login", methods=["GET", "POST"])
-@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit("5 per minute", key_func=_account_key, methods=["POST"])
+@limiter.limit("60 per minute", methods=["POST"])   # coarse limit per address
 def login():
     if request.method != "POST":      # HEAD and GET only show the form
         return render_template("login.html", error=None)
@@ -47,7 +54,7 @@ def login():
         ok = bool(user and user["is_active"] and verify_password(user["password_hash"], password))
         write_audit(conn, actor_id=user["id"] if user else None,
                     action="login", outcome="allowed" if ok else "denied",
-                    ip=request.remote_addr, detail={"email": email})
+                    ip=client_ip(), detail={"email": email})
     if not ok:
         return render_template("login.html", error="Wrong email or password."), 401
     token = create_session(user["id"])
@@ -66,7 +73,7 @@ def logout():
     if user:
         with get_engine().begin() as conn:
             write_audit(conn, actor_id=user["id"], action="logout", outcome="allowed",
-                        ip=request.remote_addr)
+                        ip=client_ip())
     resp = make_response(redirect(url_for("auth.login")))
     resp.delete_cookie(COOKIE_NAME)
     return resp

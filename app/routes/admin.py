@@ -8,6 +8,7 @@ from ..audit import verify_chain, write_audit
 from ..auth import get_current_user
 from ..authz import authorize
 from ..db import get_engine
+from ..clientip import client_ip
 
 bp = Blueprint("admin", __name__)
 
@@ -30,7 +31,7 @@ def _require_admin():
         # Committed before aborting, so the refusal is not rolled back.
         with get_engine().begin() as conn:
             write_audit(conn, actor_id=user["id"], action="admin_access",
-                        outcome="denied", ip=request.remote_addr,
+                        outcome="denied", ip=client_ip(),
                         detail={"path": request.path})
         abort(404)
     return user
@@ -117,7 +118,7 @@ def activity():
     with get_engine().begin() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
         write_audit(conn, actor_id=user["id"], action="audit_view", outcome="allowed",
-                    ip=request.remote_addr,
+                    ip=client_ip(),
                     detail={"filters": {k: request.args[k][:100]
                                         for k in FILTER_KEYS if k in request.args}})
 
@@ -146,6 +147,6 @@ def verify():
     with get_engine().begin() as conn:
         intact, first_bad_row = verify_chain(conn)
         write_audit(conn, actor_id=user["id"], action="audit_verify", outcome="allowed",
-                    ip=request.remote_addr,
+                    ip=client_ip(),
                     detail={"intact": intact, "first_bad_row": first_bad_row})
     return jsonify(intact=intact, first_bad_row=first_bad_row)

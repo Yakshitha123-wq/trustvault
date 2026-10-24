@@ -6,6 +6,7 @@ from sqlalchemy import text
 from ..access import get_document_or_404
 from ..audit import write_audit
 from ..db import get_engine
+from ..clientip import client_ip
 
 bp = Blueprint("sharing", __name__)
 
@@ -57,7 +58,7 @@ def grant(doc_id):
             {"d": doc["id"], "u": target, "p": permission, "g": user["id"]})
         write_audit(conn, actor_id=user["id"], action="grant", outcome="allowed",
                     document_id=doc["id"], target_user_id=target,
-                    ip=request.remote_addr,
+                    ip=client_ip(),
                     detail={"permission": permission, "previous": previous})
     return jsonify(user_id=str(target), permission=permission)
 
@@ -79,5 +80,5 @@ def revoke(doc_id, user_id):
             return jsonify(error="No such grant."), 404
         write_audit(conn, actor_id=user["id"], action="revoke", outcome="allowed",
                     document_id=doc["id"], target_user_id=target,
-                    ip=request.remote_addr, detail={"permission": previous})
+                    ip=client_ip(), detail={"permission": previous})
     return jsonify(user_id=str(target), revoked=True)

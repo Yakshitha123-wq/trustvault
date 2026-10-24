@@ -6,13 +6,14 @@ from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
 from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
+from .clientip import client_ip
+
 
 from .db import get_engine
 from .validation import MAX_BYTES
 
 csrf = CSRFProtect()
-limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
-
+limiter = Limiter(key_func=client_ip, storage_uri="memory://")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; "
        "form-action 'self'; frame-ancestors 'none'")
@@ -28,6 +29,8 @@ def create_app(test_config=None):
     # Flask's own cookie (it carries the CSRF token): not sent on cross-site POSTs.
     # Assigned directly: Flask's default config already has this key, so setdefault would do nothing.
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["TRUST_CF_CONNECTING_IP"] = os.environ.get("TRUST_CF_CONNECTING_IP") == "1"
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE") == "1"
     app.config.update(test_config or {})
     csrf.init_app(app)
     limiter.init_app(app)

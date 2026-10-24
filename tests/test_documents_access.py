@@ -1,6 +1,7 @@
 from sqlalchemy import text
 
 from app.db import get_engine
+   
 
 MISSING = "00000000-0000-0000-0000-000000000000"
 
@@ -44,7 +45,6 @@ def test_missing_and_forbidden_look_identical(client_for, people, doc):
     assert forbidden.status_code == missing.status_code == 404
     assert forbidden.data == missing.data
 
-
 def test_not_a_uuid_is_404_not_500(client_for, people):
     assert client_for(people["owner"]).get("/documents/not-a-uuid").status_code == 404
 
@@ -61,3 +61,19 @@ def test_refused_attempt_is_audited(client_for, people, doc):
     before = _denied_count(people["stranger"])
     client_for(people["stranger"]).get(f"/documents/{doc}")
     assert _denied_count(people["stranger"]) == before + 1
+
+def test_detail_says_what_the_caller_may_do(client_for, people, doc):
+    def can(who):
+        return client_for(people[who]).get(f"/documents/{doc}").get_json()["can"]
+    assert can("owner") == {"read": True, "edit": True, "delete": True, "share": True}
+    assert can("reader") == {"read": True, "edit": False, "delete": False, "share": False}
+    assert can("admin") == {"read": False, "edit": False, "delete": False, "share": False}
+
+
+def test_an_editor_may_read_and_edit_only(client_for, people, doc):
+    with get_engine().begin() as conn:
+        conn.execute(text("UPDATE grants SET permission = 'edit' "
+                          "WHERE document_id = :d AND user_id = :u"),
+                     {"d": doc, "u": people["reader"]})
+    can = client_for(people["reader"]).get(f"/documents/{doc}").get_json()["can"]
+    assert can == {"read": True, "edit": True, "delete": False, "share": False}

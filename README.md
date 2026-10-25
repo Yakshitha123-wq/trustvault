@@ -9,11 +9,11 @@ The free host sleeps when idle, so the first load can take about a minute.
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@trustvault.example | wU252hCYAmmpIUML |
-| Owner | owner@trustvault.example | _PlOKzs2upnPuoP3 |
-| Viewer | viewer@trustvault.example | GI92mb0llYya38l0 |
+| Admin | admin@trustvault.example | k3fmKDyrIUZJviUu |
+| Owner | owner@trustvault.example | pobNgY1PbOTZjij9 |
+| Viewer | viewer@trustvault.example | Y-U_4XKh5AXdnTVO|
 
-The site has sample documents. Login is limited to 5 attempts per minute per account, so after a few wrong passwords an account answers "too many attempts" and clears again after a minute. These accounts exist only for judging, and their passwords will be changed afterwards.
+The site has sample documents. Login is limited to 5 attempts per minute per account, plus a coarse per-address limit, so after a few wrong passwords an account answers "too many attempts" and clears again after a minute. These accounts exist only for judging, and their passwords will be changed afterwards.
 
 ## What each role can do
 
@@ -55,27 +55,29 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Create the database and the restricted application role (run as the database owner):
+Create the database (run as the database owner):
 
-powershell
+```powershell
 psql -U postgres -c "CREATE DATABASE trustvault;"
 psql -U postgres -d trustvault -f db/schema.sql
+```
+
 `db/migrations/002_document_blobs.sql` is only for a database created before the `document_blobs` table was added to `schema.sql`. A fresh install does not need it.
 
-Open `db/roles.sql`, replace `CHANGE_ME` with a long random password in your working copy (do not commit it), then:
+Open `db/roles.sql`, replace `CHANGE_ME` with a long random password in your working copy (do not commit it), then create the restricted application role:
 
-owershell
+```powershell
 psql -U postgres -d trustvault -f db/roles.sql
-
+```
 
 Set the environment and start the app:
 
-powershell
+```powershell
 $env:SECRET_KEY = (python -c "import secrets; print(secrets.token_hex(32))")
 $env:DATABASE_URL = "postgresql://trustvault_app:YOUR-PASSWORD@localhost:5432/trustvault"
 python -m scripts.seed          # prints three passwords once, save them
 flask --app app run
-
+```
 
 Open http://127.0.0.1:5000. To reset a user's password: `python -m scripts.reset_password someone@example.com`.
 
@@ -83,14 +85,14 @@ Open http://127.0.0.1:5000. To reset a user's password: `python -m scripts.reset
 
 The tests need a separate database ending in `_test` (they refuse to run on any other). Create it the same way (`trustvault_test`, `schema.sql`, `roles.sql`), then:
 
-powershell
+```powershell
 $env:SECRET_KEY = "any-string"
 $env:DATABASE_URL = "postgresql://trustvault_app:YOUR-PASSWORD@localhost:5432/trustvault_test"
 $env:TEST_OWNER_DATABASE_URL = "postgresql://postgres:YOUR-POSTGRES-PASSWORD@localhost:5432/trustvault_test"
 pytest -q --tb=line
+```
 
-
-`TEST_OWNER_DATABASE_URL` is only used by the audit tests that check the database trigger. Use `tb=line` so a failure never prints a connection string.
+`TEST_OWNER_DATABASE_URL` is only used by the audit tests that check the database trigger. Use `--tb=line` so a failure never prints a connection string.
 
 ## Deploy on Render
 
@@ -100,7 +102,7 @@ pytest -q --tb=line
 4. Web service environment variables:
    - `SECRET_KEY` (required): a long random value
    - `DATABASE_URL`: the **application role's** URL (`trustvault_app`), never the owner's
-   - `COOKIE_SECURE=1`: marks the CSRF-token cookie Secure
+   - `COOKIE_SECURE=1`: adds the Secure flag to Flask's `session` cookie (it carries the CSRF secret). The login cookie `tv_session` is already Secure over HTTPS.
    - `TRUST_CF_CONNECTING_IP=1`: reads the caller's address from Cloudflare's header, which Render sits behind. Leave it off anywhere else.
 5. Seed the three accounts once with `python -m scripts.seed`, using the external database host, and save the printed passwords.
 

@@ -22,7 +22,7 @@
 - I added `storage_key` to the JSON in documents.py. Only test_admin_can_see_metadata_only failed.
 - I changed the download action from "read" to "view_meta". Only test_admin_cannot_download_contents failed.
 Each passed again after `git restore`.
-**Accepted detail:** an anonymous request gets 401, not 404. That shows a login is needed but not whether the document exists.
+**Accepted detail:** `storage_key` is a vestigial column from the on-disk design; it is never returned by any route (file bytes live in `document_blobs`). An anonymous request gets 401, not 404. That shows a login is needed but not whether the document exists.
 **Accepted risks:**
 - A refused request writes an audit row and a missing-document request also does, but the forbidden path does extra work (grants lookup), so response time may differ slightly. I have not tried to hide this timing difference.
 - A malformed ID returns 404 without an audit row. Anonymous and stranger probes each write a row, so an attacker could grow the audit log. Rate limiting these routes is not built yet.
@@ -61,22 +61,24 @@ Each passed again after `git restore`.
 **Status:** TESTED: test_download_is_sent_as_an_attachment_with_nosniff.
 **Mutation check (2026-10-21):** I removed the nosniff header. The test failed. Restored, it passed.
 
-## T8: Brute-force login and account probing (2026-10-19, updated 2026-10-21)
+## T8: Brute-force login and account probing (2026-10-19, updated 2026-10-25)
 **Attack:** guessing passwords by repeated POSTs to /login, or telling registered emails from unregistered ones.
-**Defence:** “5 attempts per minute per account (lower-cased email) and 60 per minute per address (app/routes/auth_routes.py). An unknown email and a wrong password give the same message and status.”
-**Status:** “TESTED in tests/test_login_limit.py (4 tests), with mutation checks (see T18).”
+**Defence:** 5 attempts per minute per account (lower-cased, trimmed email) and 60 per minute per address (app/routes/auth_routes.py). An unknown email and a wrong password give the same message and status.
+**Status:** TESTED in tests/test_login_limit.py (4 tests: sixth attempt refused, changing address does not reset the counter, one account's attempts do not lock another, case and spaces do not start a new counter), with mutation checks (see T18).
 **Known weaknesses:**
-- The limit is per IP, so shared networks share a counter, and memory storage is per process and resets on restart.
+- Lockout cost: anyone can keep a named account at its limit, so it answers 429 for a minute at a time (found on the live site, T18).
+- The counters are in memory, per process, and reset on restart.
 - 429 responses are not written to the audit log.
 - A failed login stores the email that was typed. If someone types a password into the email box, it lands in the permanent audit log.
 - An unknown email skips the password check, so its response is slightly faster than a wrong password for a real account. I have not tried to hide this timing difference.
+- Registration is not rate limited.
 
 ## T9: Access leaves no record (2026-10-21, updated 2026-10-22)
 **Attack:** someone uploads, downloads, shares or probes a document and afterwards nobody can say who did it, or refused attempts leave no trace.
 **Defence:** every upload, download, grant and revoke writes an `allowed` audit row in the same transaction as the action, so if the audit write fails the action fails. Grant and revoke rows name the person affected and the permission. Every refused document request writes a `denied` row (action `document_access`) before the 404 or 401 is returned. Rows are hash-chained (T1).
 **Status:** TESTED for upload, download, grant, revoke and refused access: test_upload_is_audited, test_successful_download_is_audited, test_refused_download_is_audited, test_refused_attempt_is_audited, test_grant_is_audited, test_grant_audit_row_names_the_person_and_level, test_revoke_is_audited, test_refused_grant_attempt_is_audited.
 **Mutation checks:** removing the `write_audit` call from `get_document_or_404` failed only test_refused_attempt_is_audited (2026-10-20). Removing it from the download route failed test_successful_download_is_audited, and removing it from grant and revoke failed their audit tests (2026-10-21). Each passed again after restoring.
-**Also covered:** edit and delete are audited in the same transaction (test_edit_is_audited, test_delete_is_audited, test_refused_edit_and_delete_are_audited, see T16).Viewing the activity, running the chain check and refused attempts at the admin routes are audited too (T17).
+**Also covered:** edit and delete are audited in the same transaction (test_edit_is_audited, test_delete_is_audited, test_refused_edit_and_delete_are_audited, see T16). Viewing the activity, running the chain check and refused attempts at the admin routes are audited too (T17).
 **Not covered:** list and search are not audited. Login success and failure are audited, but no automated test checks them. Anonymous upload refusals, rate-limited logins (429), requests over the size cap (413) and account registration are not recorded.
 
 ## T10: Known demo credentials on the live site (2026-10-21)
@@ -100,8 +102,8 @@ Each passed again after `git restore`.
 **Defence:** `CSRFProtect` is enabled for the whole app (app/__init__.py). Every POST needs a valid token, and Flask-WTF also checks the Referer over HTTPS. The session cookie is HttpOnly and SameSite=Lax.
 **Status:** TESTED for upload, grant and revoke: tests/test_csrf.py::test_post_without_csrf_token_is_rejected, and test_grant_without_csrf_token_is_rejected and test_revoke_without_csrf_token_is_rejected in tests/test_grants.py. Each builds an app with CSRF left on and expects 400. The cookie flags are tested in tests/test_session_cookie.py.
 **Mutation checks (2026-10-21):** with CSRF switched off in the test app, the upload test failed (201 instead of 400) and both grant and revoke tests failed (200 instead of 400). In the cookie test, `httponly=False` failed the HttpOnly assertion and `samesite="None"` failed the SameSite assertion. Each passed again after restoring.
-**Live check (2026-10-21):** a curl upload to the deployed site with no CSRF token and no session cookie returned 400. Without CSRF an anonymous upload would have returned 401 from the route, so the CSRF check runs first. I did not repeat this while logged in.
-**Not covered:** login and logout have no CSRF test of their own, and every other test runs with CSRF switched off in conftest.py. Edit and delete share the global protection but have no CSRF test of their own. The cookie test does not check the Secure flag, which is only set over HTTPS, and I have not checked it on the live site.
+**Live check (2026-10-21):** a curl upload to the deployed site with no CSRF token and no session cookie returned 400. Without CSRF an anonymous upload would have returned 401 from the route, so the CSRF check runs first. On 2026-10-24 a POST without a token returned 400 for every logged-in role (T18).
+**Not covered:** login and logout have no CSRF test of their own, and every other test runs with CSRF switched off in conftest.py. Edit and delete share the global protection but have no CSRF test of their own. The Flask session cookie's Secure flag is tested in tests/test_cookie_flags.py and was seen on the live login page (T18).
 
 ## T13: Someone who is not the owner changes who has access (2026-10-21, updated 2026-10-22)
 **Attack:** a reader, an editor, an admin, another owner or an anonymous caller grants themselves or someone else access, upgrades their own grant from read to edit, revokes another person's access, or lists who has access. A forged cross-site POST does the same through the owner's browser.
@@ -184,7 +186,7 @@ Each passed again after `git restore`.
 8. The `outcome` check deleted: test_bad_filters_are_400[outcome] failed.
 9. Sort order reversed: test_newest_first and test_paging_with_before_id failed.
 10. Page cap removed: test_limit_is_respected_and_capped failed.
-**Live check (2026-10-23):** on the deployed site an anonymous request to `/admin/activity` and to `/documents` returned 401. Logged in as the demo admin, `/admin/activity` returned events and `/admin/audit/verify` returned `{"first_bad_row":null,"intact":true}`. The check wrote `audit_view` and `audit_verify` rows to the live audit log. I did not test the admin routes on the live site as a non-admin.
+**Live check (2026-10-23):** on the deployed site an anonymous request to `/admin/activity` and to `/documents` returned 401. Logged in as the demo admin, `/admin/activity` returned events and `/admin/audit/verify` returned `{"first_bad_row":null,"intact":true}`. The check wrote `audit_view` and `audit_verify` rows to the live audit log. As the reader, editor and stranger, both admin routes answered 404 on the live site (T18), and each refusal is in the audit trail.
 **Weak test found and fixed before the routes existed:** my first limit test only failed if the table held more than 500 rows, so it could have passed with no cap in the code. I rewrote it to lower the cap to 3 with `monkeypatch`, and mutation 10 then failed it.
 **Accepted risks:**
 - The detail of an event can contain document names (upload, edit), even for a document that is later soft-deleted, so an admin can see names that the document list hides.
@@ -196,26 +198,58 @@ Each passed again after `git restore`.
 - The demo admin password is in the README (T10), so anyone who reads it can read the whole audit trail: document names, IP addresses and emails typed at failed logins. I accept this because the brief requires a credential for each role, and the accounts should be deleted or have their passwords changed after judging.
 - /admin/audit/verify is a GET that writes an audit row. A cross-site link could make a logged-in admin's browser add a row, but it cannot read the response.
 
-## T18: Attacking the deployed site as each role (2026-10-24)
+## T18: Attacking the deployed site as each role (2026-10-24, updated 2026-10-25)
 **What I did:** with the browser console on the live site I called nine routes as the reader, the editor, the stranger, the admin and an anonymous user, and checked headers and anonymous requests with curl. Then I read the admin activity page to see whether each probe was recorded.
 **Results:**
-- Reader: detail and download 200; list grants, edit, self-grant 404; upload 403; admin routes 404.
+- Reader: detail and download 200; list grants, edit and self-grant 404; upload 403; admin routes 404.
 - Editor (a viewer with an edit grant): as the reader, but edit 200.
-- Stranger (the same account after the grant was removed): detail, download and every other route 404. The grant removal took effect on the next request.
+- Stranger (the same account after the grant was removed): every document route 404. The removal took effect on the next request.
 - Admin: detail 200, download 404, grants, edit and self-grant 404, upload 403, activity and verify 200.
 - Anonymous: every route 401.
-- A POST without a CSRF token returned 400 for every role while logged in, so CSRF is enforced on the live site for logged-in users (closes the gap noted in T12).
-- Owner: <fill in the owner run, or delete this line>.
-**Audit check:** every refused attempt appears on the admin page with the right person, action and document, in the order I made them, and "Verify audit chain" reported the chain intact. Anonymous upload and admin attempts (401) are not recorded, as T3 and T17 say.
+- A POST without a CSRF token returned 400 for every role while logged in, so CSRF is enforced on the live site for logged-in users.
+- Owner: not probed in this console run (the owner's refused admin requests are rows 123 and 124 in the audit trail). Owner behaviour is covered by the tests in T2, T13, T15 and T16.
+**Audit check:** every refused attempt is on the admin page with the right person, action and document, in the order I made them, and "Verify audit chain" reported the chain intact. Anonymous upload and admin attempts (401) are not recorded, as T3 and T17 say.
 **Headers on the live login page:** Content-Security-Policy with script-src 'self', X-Frame-Options DENY, Referrer-Policy same-origin, X-Content-Type-Options nosniff, Cache-Control no-store and Strict-Transport-Security.
 **Findings and what I did:**
-1. The audit log's IP column held Render's internal addresses (10.x), and one user's requests within one second showed different ones. `ProxyFix(x_for=1)` does not give the real caller on Render. I added `client_ip()` (app/clientip.py), which reads Cloudflare's CF-Connecting-IP only when TRUST_CF_CONNECTING_IP is switched on, validates it as an address, and falls back to the connection address otherwise. Tested in tests/test_client_ip.py. <live result of the spoof check: fill in what you saw>
-2. The login limit counted per address, so on Render everyone shared a few counters: strangers could lock each other out, and an attacker spread over them gets several times the allowance. The limit is now 5 attempts per minute per account (lower-cased email), plus a coarse 60 per minute per address. Tested in tests/test_login_limit.py. The cost: anyone can keep a named account at its limit, so it will answer 429 for a minute at a time.
-3. The Flask `session` cookie, which carries the CSRF secret, had no Secure flag. It now does on Render (COOKIE_SECURE=1). Tested in tests/test_cookie_flags.py.
-**Mutation checks (2026-10-24):** <fill in from the table above>
+1. The audit log's IP column held Render's internal addresses (10.x), and one user's requests within one second showed different ones. `ProxyFix(x_for=1)` does not give the real caller on Render. I added `client_ip()` (app/clientip.py), which reads Cloudflare's CF-Connecting-IP only when TRUST_CF_CONNECTING_IP is switched on, validates it as an address, and falls back to the connection address otherwise (tests/test_client_ip.py). After switching it on, the first new anonymous row shows my real public address (the one `curl -4 api.ipify.org` reports). Rows written earlier keep the internal addresses, because the log is append-only. Header checks (2026-10-25), one document id per request so each row can be traced: (a) a request with a forged `CF-Connecting-IP: 6.6.6.6` (document ...0001) wrote no audit row. Repeated against document ...0006 with `curl -i`, it answered 403 with the plain-text body `error code: 1000`, `Server: cloudflare` and a CF-RAY header. It had none of the application's headers: no Content-Security-Policy, and X-Frame-Options SAMEORIGIN where the application sends DENY. So Cloudflare refused it before it reached the application. I did not find out why Cloudflare treats this header that way. The result for the audit log is that a forged CF-Connecting-IP cannot get through the edge, and no audit row ever showed 6.6.6.6. (b) A plain request (...0002) wrote one anonymous row with my real public address (my connection's address had changed since the first check). (c) A request with an irrelevant header `X-Test: 1` (...0003) showed the same address. (d) A request with a forged `X-Forwarded-For` (...0004) showed my real address, not the forged one.
+2. The login limit counted per address, so on Render everyone shared a few counters: strangers could lock each other out, and an attacker spread across them got several times the allowance. It is now 5 attempts per minute per account (lower-cased email) plus a coarse 60 per minute per address (tests/test_login_limit.py). On the live site five attempts for one account were recorded (rows 183 to 187). The cost: anyone can keep a named account at its limit, so it answers 429 for a minute at a time.
+3. The Flask `session` cookie, which carries the CSRF secret, had no Secure flag. With COOKIE_SECURE=1 on Render the live login page now sets `Secure; HttpOnly; SameSite=Lax` (tests/test_cookie_flags.py).
+**Mutation checks (2026-10-24 and 25):** I ran the 9 tests in test_login_limit.py, test_client_ip.py and test_cookie_flags.py after each break, and restored after each.
+1. Deleted `key_func=_account_key` from the login limit: 2 failed, test_changing_address_does_not_reset_an_accounts_counter and test_one_accounts_attempts_do_not_lock_another.
+2. Deleted the `5 per minute` limit line: 3 failed, test_sixth_wrong_login_for_one_account_is_refused, test_changing_address_does_not_reset_an_accounts_counter and test_email_case_and_spaces_do_not_start_a_new_counter. More than the one I expected, because all three need the per-account limit to exist; only the "does not lock another" test still passed, as there was no limit left to lock anyone.
+3. Deleted `.lower()` in `_account_key`: 1 failed, test_email_case_and_spaces_do_not_start_a_new_counter.
+4. Deleted the `if current_app.config.get(...)` check and its body in clientip.py: 1 failed, test_trusted_header_gives_the_real_address (got 10.9.9.9, expected 203.0.113.7).
+5. Changed that condition to `if True:`: 1 failed, test_header_is_ignored_unless_trusted (got 203.0.113.7, expected 10.9.9.9).
+6. Removed the try/except around `ipaddress.ip_address`: 1 failed, test_garbage_in_the_trusted_header_falls_back, with a ValueError.
+7. Put `ip=request.remote_addr` back in routes/sharing.py: 1 failed, test_no_code_reads_remote_addr_directly, naming sharing.py.
+8. Changed `COOKIE_SECURE` to `COOKIE_SECUREX`: 1 failed, test_flask_session_cookie_is_secure_when_switched_on (the cookie had HttpOnly but no Secure).
 **Accepted risks:**
 - If Render stops using Cloudflare, or Cloudflare stops sending CF-Connecting-IP, the audit falls back to Render's internal addresses without any error.
 - Registration is still not rate limited.
-- The limit is kept in memory, one process, and resets on every restart.
+- The limit is kept in memory in one process and resets on every restart.
 - 429 refusals are not audited.
-**Not covered:** the browser pass (hostile names in the list, detail and activity pages, the Back button after logout, role buttons, an expired token) is recorded in T19.
+**Not covered:** the browser pass is recorded in T19.
+
+## T19: Attacking the pages in a browser (2026-10-24)
+**What I did:** on a local copy against my dev database I tried to make stored text run as script, to read data after logging out, to see buttons I should not have, and to submit with an out-of-date CSRF token.
+**Results:** (1) a user named `<img src=x onerror=alert(1)>`, and a document renamed `<img src=x onerror=alert(1)>.txt` with the category `<script>alert(1)</script>`, shown in the list, the detail page, the grants table and the admin activity page: every place showed the text literally and no alert fired. (2) After logging out, the Back button showed no document data. (3) The owner, an editor, a reader and the admin each saw exactly their own buttons. (4) A form submitted after restarting with a different SECRET_KEY got 400 and the reload message, and the name did not change.
+**Defence:** pages are static shells. All data comes from the JSON routes through `fetch` and is put in the page with `textContent` (the `el()` helper in app/static/app.js). The CSP allows scripts only from this site, with no inline script or style. Pages are `Cache-Control: no-store`.
+**Status:** TESTED in tests/test_pages.py (shell authentication, no inline script or style, no `innerHTML` or `eval` in the JavaScript, CSP and security headers, the CSRF token in the header). The browser pass above is manual.
+**Mutation checks (2026-10-24):** I ran tests/test_pages.py and tests/test_documents_access.py (26 tests) after each break and restored after each.
+1. ui.py, deleted the check that sends an anonymous caller to the login page: 1 failed, test_document_page_sends_anonymous_to_login (200 instead of 302).
+2. ui.py, deleted the admin check in the admin page: 1 failed, test_only_an_admin_opens_the_admin_page (200 instead of 404).
+3. `'unsafe-inline'` added to script-src in the CSP: 1 failed, test_csp_allows_only_our_own_scripts.
+4. Referrer-Policy changed to `no-referrer`: 1 failed, test_security_headers_on_every_kind_of_response.
+5. The `no-store` lines deleted: 1 failed, test_dynamic_responses_are_not_cached, with a 400 KeyError because the header was missing.
+6. documents.py, `can["edit"]` always True: 1 failed, test_detail_says_what_the_caller_may_do. The editor test still passed, because an editor really may edit. Making `can["delete"]` always True failed 2: that test and test_an_editor_may_read_and_edit_only.
+7. base.html, an inline `<script>console.log(1)</script>` added: 1 failed, test_pages_have_no_inline_script_or_style.
+8. base.html, the csrf-token meta tag deleted: 1 failed, test_csrf_token_from_the_page_works_in_the_header.
+9. detail.js, `title.innerHTML = d.name;` added: 1 failed, test_javascript_never_builds_html_from_data.
+10. auth_routes.py, login redirects to `/health`: 1 failed, test_login_lands_on_the_documents_page.
+**Not covered:** the browser pass was done in one browser, and the JavaScript has no unit tests.
+
+## T20: Route inventory (2026-10-25)
+**Attack:** a route added later that nobody remembered to protect, or an endpoint missing from the documentation.
+**Defence:** tests/test_route_inventory.py walks Flask's URL map. Every route outside a short public list must refuse an anonymous caller (401 or 302), and API.md must mention every route.
+**Status:** TESTED in tests/test_route_inventory.py (2 tests). Mutation check (2026-10-25): I added a temporary unprotected `GET /documents/<doc_id>/preview` route. test_every_route_outside_the_public_list_refuses_an_anonymous_caller failed with "GET /documents/<doc_id>/preview answered 200", and test_api_md_mentions_every_route failed with "API.md does not mention /documents/<doc_id>/preview". Restored with git restore; both passed again.
+**Not covered:** the test checks anonymous callers only; logged-in role rules are covered route by route in T2, T13, T15, T16 and T17.

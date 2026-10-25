@@ -314,6 +314,36 @@ values failed with a database error instead of a clean 400.
 
 **What I did instead:** The admin list shows metadata for every document that is not soft-deleted, never contents, and the download still returns 404 for admins. I rewrote the tests first, and added test_list_matches_authorize_for_everyone, which compares the list with `authorize()` for every kind of user so the SQL and `authorize()` cannot drift apart.
 
-**Commit:** https://github.com/Yakshitha123-wq/trustvault/commit/3195ad8743ac59465f89d10e5b15f3bd8cbd38eb
-https://github.com/Yakshitha123-wq/trustvault/commit/97ef522e783733374f070ffa5791cdbb90aa00f3
+**Commits:**
+- https://github.com/Yakshitha123-wq/trustvault/commit/3195ad8743ac59465f89d10e5b15f3bd8cbd38eb
+- https://github.com/Yakshitha123-wq/trustvault/commit/97ef522e783733374f070ffa5791cdbb90aa00f3
 **How I checked:** the seven mutation runs listed in T15.
+
+## Entry 11: The AI said ProxyFix would give the real client address; on Render it did not (2026-10-24)
+**Tool:** Claude (chat)
+**Category:** access control / audit trail
+
+**What I asked:** how to deploy the Flask app on Render so it behaves correctly behind the proxy.
+**What it produced:** `ProxyFix(app.wsgi_app, x_for=1, x_proto=1)`, with the claim that this gives the right client address and https, so the login rate limiter would count real callers.
+**What was wrong:** the https part worked, the address part did not. On the live admin page, one user's requests within the same second showed different internal 10.x addresses. So the audit log's IP column was not evidence of who connected, and the limiter counted per internal address, shared by everyone. The AI only spotted this when I pasted the live activity page; I had not noticed it myself.
+**What I did instead:** wrote the tests first (tests/test_client_ip.py, tests/test_login_limit.py), then `client_ip()` (reads Cloudflare's header only when switched on), and changed the login limit to per account.
+**Commits (24 October 2026):**
+- tests first, committed while failing: https://github.com/Yakshitha123-wq/trustvault/commit/a9bd93ee78d9a93d0e27eb1a81114304dd8f1e64
+- fix: https://github.com/Yakshitha123-wq/trustvault/commit/99334e231e331e7874eed8867757a16b9e288af0
+- follow-up to the tests (switch the limiter on explicitly): https://github.com/Yakshitha123-wq/trustvault/commit/b4834b7cab3f3edff98e44c186db823d1b587101
+
+**How I checked:** the tests failed first and passed after, the mutation checks in T18, and on the live site a new anonymous probe showed my real address.
+
+## Entry 12: A HEAD request to /login was treated as a failed login (2026-10-24)
+**Tool:** Claude (chat)
+**Category:** audit trail / access control
+
+**What I asked:** For the login and register routes.
+**What it produced:** `if request.method == "GET":` to show the form, and the login logic for everything else.
+**What was wrong:** A HEAD request is not "GET", so `curl -I /login` ran the login with an empty email, wrote a `login` / `denied` row to the permanent audit log and returned 401. The login limiter only counted POSTs, so anyone could add unlimited audit rows with HEAD requests. I found it by running `curl.exe -I` on my live site and getting 401 where I expected 200.
+**What I did instead:** wrote the tests first (tests/test_head_requests.py), then changed both routes to `if request.method != "POST":`.
+**Commits:**
+- tests first: https://github.com/Yakshitha123-wq/trustvault/commit/dc0eed12763f2deb4d3ae6677510923636451f7d
+- fix: https://github.com/Yakshitha123-wq/trustvault/commit/23e3b22e686aefba3ce573a7ad9dd92bfb1c536c
+
+**How I checked:** the tests failed first and passed after, and `curl -I` on the live site returned 200.

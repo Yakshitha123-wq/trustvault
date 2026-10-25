@@ -1,5 +1,7 @@
 # WRITEUP
 
+Demo video: https://www.loom.com/share/bb255d49a11e44e782dfe1d3fa2e97f2
+
 ## What TrustVault is
 A document-sharing platform for a company where the wrong person cannot reach a file, and the record shows who did. It has three roles (admin, owner, viewer), per-document `read` and `edit` grants, upload, search, edit, soft delete, a tamper-evident audit trail and an admin activity view. It runs on Flask and PostgreSQL, and is deployed on Render: https://trustvault-tb2y.onrender.com
 

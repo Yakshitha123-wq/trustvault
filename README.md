@@ -5,6 +5,8 @@ A document-sharing platform where the wrong person cannot reach a file and the r
 **Live site:** https://trustvault-tb2y.onrender.com
 The free host sleeps when idle, so the first load can take about a minute.
 
+**Demo video:** https://www.loom.com/share/bb255d49a11e44e782dfe1d3fa2e97f2
+
 ## Demo accounts (live site)
 
 | Role | Email | Password |
